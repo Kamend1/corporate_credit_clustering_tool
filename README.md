@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://www.python.org/)
 [![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter)](https://jupyter.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Data: SEC EDGAR](https://img.shields.io/badge/Data-SEC%20EDGAR-lightblue)](https://www.sec.gov/edgar/)
 
 ---
@@ -29,7 +29,7 @@ By leveraging structured financial filings from EDGAR and unsupervised ML, this 
 ---
 
 ## Project Structure
-Intended project structure - WIP at the moment
+
 ```
 corporate_credit_clustering_tool/
 │
@@ -195,7 +195,7 @@ The `credit_clustering_outputs_v3/` folder contains the most recent run results:
 
 ## License
 
-Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+Distributed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE) for details.
 
 © 2026 Kamen Dimitrov, CFA
 
