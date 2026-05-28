@@ -18,30 +18,30 @@ secrets.*
 
 # Jupyter
 .ipynb_checkpoints/
+.virtual_documents/
 
 # IPython
 profile_default/
 ipython_config.py
 
-# Data folders
+# Data folders - ignore heavy/raw data folders
 data/
 datasets/
 raw/
 processed/
+raw_financial_facts_parquet/
 
-# Data files
-*.csv
-*.tsv
+# But allow CSV/Parquet outside ignored folders
+# Do NOT globally ignore *.csv or *.parquet
+
+# Excel / heavy binary data files
 *.xlsx
 *.xls
-*.parquet
 *.h5
 *.hdf5
 *.feather
-*.sqlite
-*.db
 
-# DuckDB local databases
+# Local databases
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
