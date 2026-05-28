@@ -1,0 +1,3 @@
+segment,status,rows,features,feature_list,silhouette,calinski_harabasz,davies_bouldin,feature_availability,min_non_null_features
+Financial,skipped_not_target_segment,9036,0,[],,,,,
+Non-financial,clustered,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.37130845466191637,11675.514715558098,1.1879604094546248,"{'structural_distress_risk': 1.0, 'earnings_risk': 0.995204688748779, 'operating_cashflow_risk': 0.9810407601456353, 'liquidity_risk': 0.9362845218009058, 'leverage_risk': 0.4706509191013232, 'debt_service_risk': 0.19105763253707486}",4.0
