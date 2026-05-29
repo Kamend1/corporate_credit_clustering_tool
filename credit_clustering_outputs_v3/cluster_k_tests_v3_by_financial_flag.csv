@@ -1,8 +1,0 @@
-segment,k,rows,features,feature_list,silhouette,calinski_harabasz,davies_bouldin
-Non-financial,2,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.42459528687423254,16305.679285453478,1.0313934004542842
-Non-financial,3,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.45323841566997447,13877.95214083894,0.9869576306881918
-Non-financial,4,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.3932077583026284,13001.399238873639,1.1251677969616196
-Non-financial,5,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.37130845466191637,11675.514715558098,1.1879604094546248
-Non-financial,6,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.38173054200786466,11055.485413871771,1.2005466013877486
-Non-financial,7,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.39406914686597866,10993.317246477383,1.1216214250155745
-Non-financial,8,21265,6,"['structural_distress_risk', 'earnings_risk', 'operating_cashflow_risk', 'liquidity_risk', 'leverage_risk', 'debt_service_risk']",0.40508119363980466,10506.626788630516,1.0938737219524883
