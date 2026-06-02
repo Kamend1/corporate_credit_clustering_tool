@@ -11,3 +11,7 @@ reportlab
 ipykernel
 jupyter
 notebook
+requests 
+tqdm
+fastparquet
+edgartools
