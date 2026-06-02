@@ -133,7 +133,7 @@ def add_adjacent_bucket_distances_and_outlook(
     This is a relative cluster-position flag, not a time-series forecast.
     """
 
-    scored_df = scored_df.copy()
+    scored_df = scored_df.copy().reset_index(drop=True)
 
     required_cols = [
         "assigned_cluster",
