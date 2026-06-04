@@ -51,6 +51,159 @@ SCORECARD_COMPONENT_FEATURES = [
 
 
 # ---------------------------------------------------------------------
+# Guardrail / analyst interpretation columns
+# ---------------------------------------------------------------------
+
+GUARDRAIL_COLS = [
+    "guardrail_level",
+    "guardrail_flags",
+    "guardrail_summary",
+    "analyst_interpretation",
+    "commercial_conclusion",
+]
+
+
+# ---------------------------------------------------------------------
+# Guardrail severity levels
+# ---------------------------------------------------------------------
+
+GUARDRAIL_SEVERITY_ORDER = {
+    "Clear": 0,
+    "Monitor": 1,
+    "Caution": 2,
+    "High caution": 3,
+    "Override required": 4,
+}
+
+
+# ---------------------------------------------------------------------
+# Guardrail rule configuration
+# ---------------------------------------------------------------------
+
+LEVERAGE_GUARDRAILS = {
+    "elevated_debt_to_assets": {
+        "column": "debt_to_assets",
+        "operator": ">",
+        "threshold": 0.45,
+        "severity": "Caution",
+    },
+    "high_debt_to_assets": {
+        "column": "debt_to_assets",
+        "operator": ">",
+        "threshold": 0.60,
+        "severity": "High caution",
+    },
+    "elevated_debt_to_ebitda": {
+        "column": "debt_to_ebitda",
+        "operator": ">",
+        "threshold": 3.5,
+        "severity": "Caution",
+    },
+    "high_debt_to_ebitda": {
+        "column": "debt_to_ebitda",
+        "operator": ">",
+        "threshold": 5.0,
+        "severity": "High caution",
+    },
+    "elevated_net_debt_to_ebitda": {
+        "column": "net_debt_to_ebitda",
+        "operator": ">",
+        "threshold": 3.0,
+        "severity": "Caution",
+    },
+    "high_net_debt_to_ebitda": {
+        "column": "net_debt_to_ebitda",
+        "operator": ">",
+        "threshold": 4.5,
+        "severity": "High caution",
+    },
+}
+
+
+DEBT_SERVICE_GUARDRAILS = {
+    "weak_interest_coverage": {
+        "column": "interest_coverage",
+        "operator": "<",
+        "threshold": 2.0,
+        "severity": "Caution",
+    },
+    "critical_interest_coverage": {
+        "column": "interest_coverage",
+        "operator": "<",
+        "threshold": 1.0,
+        "severity": "High caution",
+    },
+    "weak_ebitda_interest_coverage": {
+        "column": "ebitda_interest_coverage",
+        "operator": "<",
+        "threshold": 3.0,
+        "severity": "Caution",
+    },
+    "weak_fcf_to_debt": {
+        "column": "fcf_to_debt",
+        "operator": "<",
+        "threshold": 0.10,
+        "severity": "Caution",
+    },
+}
+
+
+LIQUIDITY_GUARDRAILS = {
+    "current_ratio_below_1": {
+        "column": "current_ratio",
+        "operator": "<",
+        "threshold": 1.0,
+        "severity": "Caution",
+    },
+    "quick_ratio_below_0_5": {
+        "column": "quick_ratio",
+        "operator": "<",
+        "threshold": 0.5,
+        "severity": "High caution",
+    },
+    "low_cash_to_assets": {
+        "column": "cash_to_assets",
+        "operator": "<",
+        "threshold": 0.03,
+        "severity": "Monitor",
+    },
+}
+
+
+STRUCTURAL_GUARDRAILS = {
+    "negative_equity": {
+        "column": "equity_to_assets",
+        "operator": "<",
+        "threshold": 0.0,
+        "severity": "Override required",
+    },
+    "liabilities_exceed_assets": {
+        "column": "liabilities_to_assets",
+        "operator": ">",
+        "threshold": 1.0,
+        "severity": "Override required",
+    },
+}
+
+CREDIT_GUARDRAILS = {
+    **LEVERAGE_GUARDRAILS,
+    **DEBT_SERVICE_GUARDRAILS,
+    **LIQUIDITY_GUARDRAILS,
+    **STRUCTURAL_GUARDRAILS,
+}
+
+LEVERAGE_GUARDRAIL_FLAGS = set(LEVERAGE_GUARDRAILS.keys())
+DEBT_SERVICE_GUARDRAIL_FLAGS = set(DEBT_SERVICE_GUARDRAILS.keys())
+LIQUIDITY_GUARDRAIL_FLAGS = set(LIQUIDITY_GUARDRAILS.keys())
+STRUCTURAL_GUARDRAIL_FLAGS = set(STRUCTURAL_GUARDRAILS.keys())
+
+HIGH_CAUTION_GUARDRAIL_FLAGS = {
+    name
+    for name, rule in CREDIT_GUARDRAILS.items()
+    if rule.get("severity") == "High caution"
+}
+
+# ---------------------------------------------------------------------
 # Denominator/materiality thresholds
 # ---------------------------------------------------------------------
 
@@ -94,10 +247,10 @@ DEFAULT_N_INIT = 500
 # ---------------------------------------------------------------------
 
 DEFAULT_RATING_STYLE_LABELS = {
-    1: "1 - Low risk / investment-grade-like",
-    2: "2 - Moderate risk / lower-investment-grade-like",
-    3: "3 - Elevated risk / leveraged",
-    4: "4 - High risk / speculative",
+    1: "1 - Strong relative credit profile",
+    2: "2 - Good credit profile",
+    3: "3 - Leveraged / elevated risk profile",
+    4: "4 - Weak credit profile",
     5: "5 - Distressed / near-default proxy",
 }
 
@@ -287,6 +440,9 @@ SUMMARY_COLS_WITH_OUTLOOK = [
     "scorecard_credit_score",
     "feature_coverage_pct",
     "warning_flags",
+    
+    # Guardrail / analyst interpretation
+    *GUARDRAIL_COLS,
 ]
 
 SCENARIO_SUMMARY_COLS = [
@@ -308,4 +464,7 @@ SCENARIO_SUMMARY_COLS = [
     "scorecard_credit_score",
     "feature_coverage_pct",
     "warning_flags",
+
+    # Guardrail / analyst interpretation
+    *GUARDRAIL_COLS,
 ]

@@ -17,6 +17,7 @@ from .config import (
     SCENARIO_SUMMARY_COLS,
     SME_MIN_DENOMINATOR,
     PUBLIC_COMPANY_MIN_ASSETS,
+    GUARDRAIL_COLS,
 
     # Clustering defaults
     DEFAULT_SEGMENT_COL,
@@ -96,4 +97,8 @@ from .diagnostics import (
     add_adjacent_bucket_distances_and_outlook,
     compare_to_cluster_profile,
     make_scenarios,
+)
+
+from .guardrails import (
+    apply_credit_guardrails,
 )

@@ -129,10 +129,20 @@ SCENARIO_PDF_COLUMNS = [
     "cluster_label",
     "scorecard_credit_score",
     "outlook_flag",
+    "guardrail_level",
     "debt_to_ebitda",
     "interest_coverage",
     "ebitda_interest_coverage",
     "warning_flags",
+]
+
+
+GUARDRAIL_PDF_FIELDS = [
+    ("Guardrail level", "guardrail_level"),
+    ("Guardrail flags", "guardrail_flags"),
+    ("Guardrail summary", "guardrail_summary"),
+    ("Analyst interpretation", "analyst_interpretation"),
+    ("Commercial conclusion", "commercial_conclusion"),
 ]
 
 
@@ -535,6 +545,73 @@ def _warning_box(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
     return table
 
 
+def _guardrail_assessment_section(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> list[Any]:
+    """Build the PDF guardrail section from the scored dataframe columns."""
+    has_guardrails = any(
+        field in row.index and not _is_missing(row.get(field)) and str(row.get(field)).strip()
+        for _, field in GUARDRAIL_PDF_FIELDS
+    )
+
+    if not has_guardrails:
+        return []
+
+    level = row.get("guardrail_level", "n/a")
+    flags = row.get("guardrail_flags", "No guardrail flags")
+    summary = row.get("guardrail_summary", "n/a")
+    analyst_interpretation = row.get("analyst_interpretation", "n/a")
+    commercial_conclusion = row.get("commercial_conclusion", "n/a")
+
+    if _is_missing(flags) or str(flags).strip().lower() in {"", "none", "nan"}:
+        flags = "No guardrail flags"
+
+    level_text = str(level)
+    fill = LIGHT_BLUE
+    if level_text in {"High caution", "Override required"}:
+        fill = RED_TINT
+    elif level_text == "Caution":
+        fill = AMBER
+    elif level_text in {"Clear", "Monitor"}:
+        fill = GREEN_TINT if level_text == "Clear" else LIGHT_BLUE
+
+    guardrail_table = Table(
+        [
+            [_p("Guardrail level", styles["TableCellBold"]), _p(level_text, styles["TableCell"])],
+            [_p("Guardrail flags", styles["TableCellBold"]), _p(flags, styles["TableCell"])],
+        ],
+        colWidths=[4.2 * cm, 13.0 * cm],
+        hAlign="LEFT",
+    )
+    guardrail_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+                ("BACKGROUND", (1, 0), (1, 0), fill),
+                ("GRID", (0, 0), (-1, -1), 0.35, MID_GREY),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.4),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    return [
+        Spacer(1, 0.12 * cm),
+        Paragraph("Guardrail assessment", styles["Subsection"]),
+        guardrail_table,
+        Spacer(1, 0.12 * cm),
+        Paragraph("Guardrail summary", styles["SmallBold"]),
+        Paragraph(summary, styles["Body"]),
+        Paragraph("Analyst interpretation", styles["SmallBold"]),
+        Paragraph(analyst_interpretation, styles["Body"]),
+        Paragraph("Commercial conclusion", styles["SmallBold"]),
+        Paragraph(commercial_conclusion, styles["Body"]),
+    ]
+
+
 def _executive_narrative(row: pd.Series) -> str:
     company = row.get("company_name", "The company")
     cluster = _format_metric_value("assigned_cluster", row.get("assigned_cluster"))
@@ -620,13 +697,29 @@ def _scenario_table(scored_scenarios: pd.DataFrame, styles: Mapping[str, Paragra
             "cluster_label": "Risk label",
             "scorecard_credit_score": "Score",
             "outlook_flag": "Outlook",
+            "guardrail_level": "Guardrail",
             "debt_to_ebitda": "Debt / EBITDA",
             "interest_coverage": "Interest coverage",
             "ebitda_interest_coverage": "EBITDA coverage",
             "warning_flags": "Warnings",
         }
     )
-    return _dataframe_table(df, styles, col_widths=[2.4 * cm, 1.2 * cm, 3.6 * cm, 1.2 * cm, 1.5 * cm, 1.5 * cm, 1.5 * cm, 1.5 * cm, 2.8 * cm])
+    return _dataframe_table(
+        df,
+        styles,
+        col_widths=[
+            2.2 * cm,
+            1.0 * cm,
+            3.0 * cm,
+            1.1 * cm,
+            1.25 * cm,
+            1.6 * cm,
+            1.35 * cm,
+            1.35 * cm,
+            1.35 * cm,
+            2.0 * cm,
+        ],
+    )
 
 
 def _methodology_section(styles: Mapping[str, ParagraphStyle]) -> list[Any]:
@@ -768,6 +861,7 @@ def save_credit_pdf_report(
     flow.append(Spacer(1, 0.35 * cm))
     flow.append(Paragraph("Executive conclusion", styles["Subsection"]))
     flow.append(Paragraph(_executive_narrative(row), styles["Body"]))
+    flow.extend(_guardrail_assessment_section(row, styles))
     flow.append(_warning_box(row, styles))
     flow.append(Spacer(1, 0.25 * cm))
     flow.append(Paragraph("Prepared by: " + prepared_by, styles["Small"]))

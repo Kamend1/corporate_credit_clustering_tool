@@ -14,6 +14,7 @@ from typing import Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.base import clone
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
     calinski_harabasz_score,
@@ -213,16 +214,15 @@ def _profile_columns_for_artifact(df: pd.DataFrame) -> list[str]:
 
 def cluster_segment(
     df: pd.DataFrame,
+    model: Pipeline,
     segment_name: str,
+    n_clusters = DEFAULT_N_CLUSTERS,
     segment_col: str = DEFAULT_SEGMENT_COL,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
     min_rows: int = DEFAULT_MIN_ROWS_PER_SEGMENT,
     cluster_only_segments: Iterable[str] | None = DEFAULT_TARGET_SEGMENTS,
     min_feature_coverage: float = DEFAULT_MIN_FEATURE_COVERAGE,
     min_features: int = DEFAULT_MIN_FEATURES,
     row_feature_coverage: float = DEFAULT_ROW_FEATURE_COVERAGE,
-    random_state: int = DEFAULT_RANDOM_STATE,
-    n_init: int = DEFAULT_N_INIT,
     features_by_fin_flag: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[pd.DataFrame | None, dict, dict | None]:
     """
@@ -287,11 +287,7 @@ def cluster_segment(
         return None, metrics, None
 
     X = use[features]
-    pipe = make_kmeans_pipeline(
-        n_clusters=n_clusters,
-        random_state=random_state,
-        n_init=n_init,
-    )
+    pipe = model
 
     labels = pipe.fit_predict(X)
 
@@ -354,6 +350,7 @@ def cluster_segment(
 
 def cluster_segments(
     df: pd.DataFrame,
+    model: Pipeline,
     segment_col: str = DEFAULT_SEGMENT_COL,
     segment_names: Sequence[str] | None = None,
     **cluster_kwargs,
@@ -377,6 +374,7 @@ def cluster_segments(
     for segment_name in segment_names:
         clustered, metric_row, artifact = cluster_segment(
             df,
+            model,
             segment_name,
             segment_col=segment_col,
             **cluster_kwargs,
@@ -404,6 +402,7 @@ def cluster_segments(
 def evaluate_k_range(
     df: pd.DataFrame,
     segment_name: str,
+    model: Pipeline,
     segment_col: str = DEFAULT_SEGMENT_COL,
     k_values: Iterable[int] = range(2, 9),
     cluster_only_segments: Iterable[str] | None = DEFAULT_TARGET_SEGMENTS,
@@ -411,11 +410,10 @@ def evaluate_k_range(
     min_features: int = DEFAULT_MIN_FEATURES,
     row_feature_coverage: float = DEFAULT_ROW_FEATURE_COVERAGE,
     min_feature_coverage: float = DEFAULT_MIN_FEATURE_COVERAGE,
-    random_state: int = DEFAULT_RANDOM_STATE,
-    n_init: int = DEFAULT_N_INIT,
     features_by_fin_flag: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
-    """Evaluate KMeans quality metrics across a range of k values."""
+    """Evaluate KMeans quality metrics across a range of k values using the supplied model pipeline."""
+
     if cluster_only_segments and segment_name not in set(cluster_only_segments):
         return pd.DataFrame()
 
@@ -443,17 +441,23 @@ def evaluate_k_range(
     if len(use) < min_rows or len(features) < min_features:
         return pd.DataFrame()
 
-    prep = Pipeline(steps=[("imputer", SimpleImputer(strategy="median"))])
-    X = prep.fit_transform(use[features])
+    X = use[features]
 
     rows = []
+
     for k in k_values:
-        labels = KMeans(
-            n_clusters=k,
-            init="k-means++",
-            n_init=n_init,
-            random_state=random_state,
-        ).fit_predict(X)
+        pipe = clone(model)
+
+        if "cluster" not in pipe.named_steps:
+            raise KeyError("The supplied model pipeline must contain a step named 'cluster'.")
+
+        pipe.set_params(cluster__n_clusters=k)
+
+        labels = pipe.fit_predict(X)
+
+        # Use all preprocessing steps before the final cluster step
+        # for distance-based metric calculation.
+        X_prepared = pipe[:-1].transform(X)
 
         rows.append(
             {
@@ -463,9 +467,9 @@ def evaluate_k_range(
                 "features": len(features),
                 "feature_list": features,
                 "min_non_null_features": min_non_null_features,
-                "silhouette": silhouette_score(X, labels),
-                "calinski_harabasz": calinski_harabasz_score(X, labels),
-                "davies_bouldin": davies_bouldin_score(X, labels),
+                "silhouette": silhouette_score(X_prepared, labels),
+                "calinski_harabasz": calinski_harabasz_score(X_prepared, labels),
+                "davies_bouldin": davies_bouldin_score(X_prepared, labels),
             }
         )
 
@@ -474,11 +478,13 @@ def evaluate_k_range(
 
 def evaluate_segments_k_range(
     df: pd.DataFrame,
+    model: Pipeline,
     segment_col: str = DEFAULT_SEGMENT_COL,
     segment_names: Sequence[str] | None = None,
     **evaluate_kwargs,
 ) -> pd.DataFrame:
-    """Evaluate k ranges for all requested segments."""
+    """Evaluate k ranges for all requested segments using the supplied model pipeline."""
+
     if segment_col not in df.columns:
         raise KeyError(f"segment_col '{segment_col}' not found in dataframe.")
 
@@ -486,13 +492,16 @@ def evaluate_segments_k_range(
         segment_names = sorted(df[segment_col].dropna().unique())
 
     frames = []
+
     for segment_name in segment_names:
         result = evaluate_k_range(
-            df,
-            segment_name,
+            df=df,
+            segment_name=segment_name,
+            model=model,
             segment_col=segment_col,
             **evaluate_kwargs,
         )
+
         if not result.empty:
             frames.append(result)
 

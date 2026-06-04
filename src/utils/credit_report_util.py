@@ -1,3 +1,12 @@
+"""
+Excel/CSV credit report utilities for the private-company credit scoring tool.
+
+This module is presentation/export plumbing only. It does not score companies,
+engineer features, train clusters, or modify model artifacts. It consumes the
+already prepared Notebook 03 outputs and produces clean report tables plus
+CSV/XLSX outputs.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,9 +15,10 @@ from typing import Mapping, Sequence
 import pandas as pd
 
 from src.credit_clustering.config import (
+    GUARDRAIL_COLS,
     RATIO_COLS,
-    SUMMARY_COLS_WITH_OUTLOOK,
     SCENARIO_SUMMARY_COLS,
+    SUMMARY_COLS_WITH_OUTLOOK,
 )
 
 
@@ -30,14 +40,26 @@ DEFAULT_SCENARIO_INPUT_COLS = [
 ]
 
 
+GUARDRAIL_CONTEXT_COLS = [
+    "scope",
+    "scenario",
+    "company_name",
+    "fiscal_year",
+    "assigned_cluster",
+    "cluster_label",
+    "risk_rank",
+    "scorecard_credit_score",
+    "outlook_flag",
+    "warning_flags",
+]
+
+
 def _unique_existing_columns(
     df: pd.DataFrame,
     columns: Sequence[str],
 ) -> list[str]:
-    """
-    Return columns that exist in df, preserving order and removing duplicates.
-    """
-    out = []
+    """Return existing columns from df, preserving order and removing duplicates."""
+    out: list[str] = []
 
     for col in columns:
         if col in df.columns and col not in out:
@@ -47,15 +69,57 @@ def _unique_existing_columns(
 
 
 def _reset_comparison_index(comparison_to_cluster: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert cluster comparison table into export-friendly flat format.
-    """
+    """Convert cluster comparison table into export-friendly flat format."""
     comparison = comparison_to_cluster.reset_index().copy()
 
     if "index" in comparison.columns:
         comparison = comparison.rename(columns={"index": "metric"})
 
     return comparison
+
+
+def _build_guardrail_table(
+    scored_manual_with_outlook: pd.DataFrame,
+    scored_scenarios: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """
+    Build a dedicated guardrail table for Excel/PDF auditability.
+
+    The output combines the base case and scenario guardrail results into one
+    flat table. It is deliberately report-facing and does not change the scored
+    dataframes.
+    """
+    frames: list[pd.DataFrame] = []
+
+    if scored_manual_with_outlook is not None and not scored_manual_with_outlook.empty:
+        base = scored_manual_with_outlook.copy()
+        base.insert(0, "scope", "base_case")
+        if "scenario" not in base.columns:
+            base.insert(1, "scenario", "base")
+        frames.append(base)
+
+    if scored_scenarios is not None and not scored_scenarios.empty:
+        scenarios = scored_scenarios.copy()
+        scenarios.insert(0, "scope", "scenario")
+        if "company_name" not in scenarios.columns and frames:
+            company_name = frames[0].iloc[0].get("company_name")
+            scenarios["company_name"] = company_name
+        if "fiscal_year" not in scenarios.columns and frames:
+            fiscal_year = frames[0].iloc[0].get("fiscal_year")
+            scenarios["fiscal_year"] = fiscal_year
+        frames.append(scenarios)
+
+    if not frames:
+        return pd.DataFrame(columns=GUARDRAIL_CONTEXT_COLS + list(GUARDRAIL_COLS))
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+
+    guardrail_cols = _unique_existing_columns(
+        combined,
+        GUARDRAIL_CONTEXT_COLS + list(GUARDRAIL_COLS),
+    )
+
+    return combined[guardrail_cols].copy()
 
 
 def build_credit_report_tables(
@@ -85,6 +149,7 @@ def build_credit_report_tables(
         - scenario_score_summary
         - scenario_ratios
         - scenario_file
+        - guardrails
     """
 
     artifact = artifact or {}
@@ -214,6 +279,15 @@ def build_credit_report_tables(
         scenario_full_cols
     ].copy()
 
+    # ------------------------------------------------------------------
+    # Dedicated guardrail report table
+    # ------------------------------------------------------------------
+
+    guardrails = _build_guardrail_table(
+        scored_manual_with_outlook=scored_manual_with_outlook,
+        scored_scenarios=scored_scenarios,
+    )
+
     return {
         "score_summary": score_summary,
         "company_ratios": company_ratios,
@@ -223,6 +297,7 @@ def build_credit_report_tables(
         "scenario_score_summary": scenario_score_summary,
         "scenario_ratios": scenario_ratios,
         "scenario_file": scenario_file,
+        "guardrails": guardrails,
     }
 
 
@@ -237,7 +312,7 @@ def save_credit_report_outputs(
     Produces:
     - base score CSV
     - scenario CSV
-    - combined Excel report
+    - combined Excel report with a dedicated guardrails sheet
     """
 
     output_path = Path(output_path)
@@ -260,6 +335,12 @@ def save_credit_report_outputs(
         tables["company_ratios"].to_excel(
             writer,
             sheet_name="company_ratios",
+            index=False,
+        )
+
+        tables["guardrails"].to_excel(
+            writer,
+            sheet_name="guardrails",
             index=False,
         )
 
@@ -293,8 +374,20 @@ def save_credit_report_outputs(
             index=False,
         )
 
+        tables["scored_file"].to_excel(
+            writer,
+            sheet_name="raw_base_output",
+            index=False,
+        )
+
     return {
         "score_csv": score_csv,
         "scenario_csv": scenario_csv,
         "report_xlsx": report_xlsx,
     }
+
+
+__all__ = [
+    "build_credit_report_tables",
+    "save_credit_report_outputs",
+]
