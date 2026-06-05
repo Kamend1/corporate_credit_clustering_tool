@@ -54,6 +54,18 @@ BLACK = colors.black
 PAGE_WIDTH, PAGE_HEIGHT = A4
 DEFAULT_MARGIN = 1.45 * cm
 
+# Stable external interpretation scale.
+# The raw KMeans cluster ids are intentionally not shown in the executive
+# summary because KMeans label numbers are arbitrary and can change between
+# model training runs.
+CREDIT_RISK_SCALE = [
+    "1 - Low risk / investment-grade-like",
+    "2 - Moderate risk / lower-investment-grade-like",
+    "3 - Elevated risk / leveraged",
+    "4 - High risk / weak-credit-like",
+    "5 - Near-default / distressed-like",
+]
+
 CORE_RISK_DIMENSIONS = [
     ("Leverage risk", "leverage_risk", "Balance-sheet leverage and equity buffer"),
     ("Liquidity risk", "liquidity_risk", "Current, quick, and cash liquidity"),
@@ -125,7 +137,6 @@ CLUSTER_COMPARISON_METRICS = [
 
 SCENARIO_PDF_COLUMNS = [
     "scenario",
-    "assigned_cluster",
     "cluster_label",
     "scorecard_credit_score",
     "outlook_flag",
@@ -233,6 +244,14 @@ def _styles() -> dict[str, ParagraphStyle]:
             fontSize=7.4,
             leading=9.0,
             textColor=DARK_GREY,
+        ),
+        "TableHeader": ParagraphStyle(
+            "CreditReportTableHeader",
+            parent=base["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.4,
+            leading=9.0,
+            textColor=WHITE,
         ),
         "Footer": ParagraphStyle(
             "CreditReportFooter",
@@ -382,7 +401,7 @@ def _dataframe_table(
 ) -> Table:
     if max_rows is not None:
         df = df.head(max_rows).copy()
-    data = [[_p(col, styles["TableCellBold"]) for col in df.columns]]
+    data = [[_p(col, styles["TableHeader"]) for col in df.columns]]
     for _, row in df.iterrows():
         data.append([_p(_format_metric_value(str(col), row[col]), styles["TableCell"]) for col in df.columns])
     table = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
@@ -462,8 +481,7 @@ def _metadata_table(row: pd.Series, artifact: Mapping[str, Any], styles: Mapping
         ["Currency", row.get("currency", "n/a")],
         ["Source", "Manual financial statement input"],
     ]
-    data = [[_p("Field", styles["TableCellBold"]), _p("Value", styles["TableCellBold"])] for _ in []]
-    data = [[_p("Field", styles["TableCellBold"]), _p("Value", styles["TableCellBold"])]] + [
+    data = [[_p("Field", styles["TableHeader"]), _p("Value", styles["TableHeader"])]] + [
         [_p(k, styles["TableCell"]), _p(v, styles["TableCell"])] for k, v in metadata
     ]
     table = Table(data, colWidths=[4.2 * cm, 10.0 * cm], hAlign="LEFT")
@@ -472,24 +490,15 @@ def _metadata_table(row: pd.Series, artifact: Mapping[str, Any], styles: Mapping
 
 
 def _kpi_cards(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
+    """Build first-page KPI cards without exposing the raw KMeans cluster id."""
     cards = [
-        ("Assigned cluster", _format_metric_value("assigned_cluster", row.get("assigned_cluster"))),
         ("Risk label", row.get("cluster_label", "n/a")),
         ("Risk rank", _format_metric_value("risk_rank", row.get("risk_rank"))),
         ("Score", _format_score(row.get("scorecard_credit_score"))),
         ("Outlook", row.get("outlook_flag", "n/a")),
         ("Near-default affinity", _format_pct(row.get("near_default_affinity"))),
     ]
-    card_data = []
-    row_values = []
-    for label, value in cards:
-        row_values.append(
-            [
-                _p(label, styles["CardLabel"]),
-                _p(value, styles["CardValue"]),
-            ]
-        )
-    # Create two rows of three cards; each card is an inner table.
+
     inner_cards = []
     for label, value in cards:
         inner = Table(
@@ -510,8 +519,10 @@ def _kpi_cards(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
             )
         )
         inner_cards.append(inner)
+
+    empty_cell = ""
     table = Table(
-        [inner_cards[:3], inner_cards[3:]],
+        [inner_cards[:3], inner_cards[3:] + [empty_cell]],
         colWidths=[5.7 * cm, 5.7 * cm, 5.7 * cm],
         rowHeights=[1.85 * cm, 1.85 * cm],
         hAlign="LEFT",
@@ -519,6 +530,14 @@ def _kpi_cards(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
     table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return table
 
+
+def _risk_scale_table(styles: Mapping[str, ParagraphStyle]) -> Table:
+    """Show the stable 1-to-5 business interpretation scale used in the report."""
+    data = [[_p("Credit risk scale used for interpretation", styles["TableHeader"])] ]
+    data.extend([[_p(label, styles["TableCell"])] for label in CREDIT_RISK_SCALE])
+    table = Table(data, colWidths=[17.2 * cm], hAlign="LEFT")
+    table.setStyle(_table_style())
+    return table
 
 def _warning_box(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
     flags = row.get("warning_flags", "none")
@@ -614,18 +633,16 @@ def _guardrail_assessment_section(row: pd.Series, styles: Mapping[str, Paragraph
 
 def _executive_narrative(row: pd.Series) -> str:
     company = row.get("company_name", "The company")
-    cluster = _format_metric_value("assigned_cluster", row.get("assigned_cluster"))
-    label = row.get("cluster_label", "unlabelled risk cluster")
+    label = row.get("cluster_label", "unlabelled risk group")
     outlook = row.get("outlook_flag", "Neutral")
     score = _format_score(row.get("scorecard_credit_score"))
     return (
-        f"{company} is assigned to Cluster {cluster}, corresponding to '{label}'. "
+        f"{company} is classified as '{label}' under the stable 1-to-5 risk-label scale shown above. "
         f"The scorecard credit score is {score}. The scorecard evaluates relative "
         "credit risk across leverage, liquidity, earnings quality, operating cash-flow "
         "generation, debt-service capacity, and structural balance-sheet indicators. "
-        f"The current cluster-position outlook is {outlook}."
+        f"The current classification outlook is {outlook}."
     )
-
 
 def _scorecard_table(row: pd.Series, styles: Mapping[str, ParagraphStyle]) -> Table:
     rows = [["Dimension", "Score", "Interpretation"]]
@@ -676,7 +693,7 @@ def _cluster_comparison_table(
     rename = {
         "metric": "Metric",
         "company_value": "Company",
-        "assigned_cluster_median": "Cluster median",
+        "assigned_cluster_median": "Risk group median",
         "difference": "Difference",
         "relative_position": "Position",
     }
@@ -693,7 +710,6 @@ def _scenario_table(scored_scenarios: pd.DataFrame, styles: Mapping[str, Paragra
     df = df.rename(
         columns={
             "scenario": "Scenario",
-            "assigned_cluster": "Cluster",
             "cluster_label": "Risk label",
             "scorecard_credit_score": "Score",
             "outlook_flag": "Outlook",
@@ -708,9 +724,8 @@ def _scenario_table(scored_scenarios: pd.DataFrame, styles: Mapping[str, Paragra
         df,
         styles,
         col_widths=[
-            2.2 * cm,
-            1.0 * cm,
-            3.0 * cm,
+            2.6 * cm,
+            3.3 * cm,
             1.1 * cm,
             1.25 * cm,
             1.6 * cm,
@@ -725,7 +740,7 @@ def _scenario_table(scored_scenarios: pd.DataFrame, styles: Mapping[str, Paragra
 def _methodology_section(styles: Mapping[str, ParagraphStyle]) -> list[Any]:
     bullets = [
         "The model is an unsupervised KMeans clustering model, not a supervised default prediction model.",
-        "The assigned cluster is a relative risk grouping, not a formal external credit rating.",
+        "The assigned risk label is a relative risk grouping, not a formal external credit rating.",
         "The output does not represent a probability of default.",
         "The model is calibrated on the reference dataset used in training and should be interpreted accordingly.",
         "SME/private-company use should be treated as diagnostic benchmarking, not as bank-grade credit approval.",
@@ -739,12 +754,12 @@ def _methodology_section(styles: Mapping[str, ParagraphStyle]) -> list[Any]:
             "non-financial company observations. Financial statement data are transformed "
             "into bounded credit-risk indicators across leverage, liquidity, earnings, "
             "operating cash-flow, debt-service capacity, and structural distress. The "
-            "company is assigned to the closest cluster based on the trained model's feature space.",
+            "company is mapped to the closest trained cluster internally, then presented through a stable business risk label.",
             styles["Body"],
         ),
         Spacer(1, 0.2 * cm),
     ]
-    bullet_rows = [[_p("Important limitations", styles["TableCellBold"])] ]
+    bullet_rows = [[_p("Important limitations", styles["TableHeader"])] ]
     for item in bullets:
         bullet_rows.append([_p("- " + item, styles["TableCell"])] )
     table = Table(bullet_rows, colWidths=[17.2 * cm], hAlign="LEFT")
@@ -858,7 +873,9 @@ def save_credit_pdf_report(
     flow.append(_metadata_table(row, artifact, styles))
     flow.append(Spacer(1, 0.35 * cm))
     flow.append(_kpi_cards(row, styles))
-    flow.append(Spacer(1, 0.35 * cm))
+    flow.append(Spacer(1, 0.25 * cm))
+    flow.append(_risk_scale_table(styles))
+    flow.append(Spacer(1, 0.30 * cm))
     flow.append(Paragraph("Executive conclusion", styles["Subsection"]))
     flow.append(Paragraph(_executive_narrative(row), styles["Body"]))
     flow.extend(_guardrail_assessment_section(row, styles))
@@ -902,10 +919,10 @@ def save_credit_pdf_report(
         flow.append(PageBreak())
 
         # Page 4: Cluster comparison.
-        flow.append(Paragraph("3. Comparison with Assigned Cluster Median", styles["Section"]))
+        flow.append(Paragraph("3. Comparison with Assigned Risk Group Median", styles["Section"]))
         flow.append(
             Paragraph(
-                "The comparison table explains the company's position relative to the median financial profile of its assigned cluster. Positive or negative differences should be interpreted according to the economic meaning of each metric; higher liquidity ratios are generally stronger, while higher leverage ratios are generally weaker.",
+                "The comparison table explains the company's position relative to the median financial profile of its assigned labelled risk group. Positive or negative differences should be interpreted according to the economic meaning of each metric; higher liquidity ratios are generally stronger, while higher leverage ratios are generally weaker.",
                 styles["Body"],
             )
         )
@@ -916,7 +933,7 @@ def save_credit_pdf_report(
         flow.append(Paragraph("4. Scenario Analysis", styles["Section"]))
         flow.append(
             Paragraph(
-                "Scenario analysis assesses the stability of the company's cluster assignment and scorecard risk profile under simplified operating, leverage, liquidity, and distress assumptions. The scenarios are mechanical sensitivities and do not represent forecasts.",
+                "Scenario analysis assesses the stability of the company's risk label and scorecard risk profile under simplified operating, leverage, liquidity, and distress assumptions. The scenarios are mechanical sensitivities and do not represent forecasts.",
                 styles["Body"],
             )
         )
