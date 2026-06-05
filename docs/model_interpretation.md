@@ -1,171 +1,361 @@
-# Model Interpretation
+# Model Interpretation Guide
 
-This document explains how to read and interpret every output column produced by the scoring pipeline. It covers cluster labels, distance metrics, soft affinities, outlook flags, warning flags, and the scorecard credit score.
+## Purpose of this document
+
+This document explains how to read the outputs produced by the Corporate Credit Clustering Tool. It covers cluster labels, risk ranks, distance metrics, soft affinities, outlook flags, scorecard scores, warning flags, guardrails, and common interpretation mistakes.
+
+The model output should be read as a **relative financial-risk diagnostic**, not as a formal credit rating.
 
 ---
 
 ## 1. The five risk tiers
 
-After clustering, each company-year observation is assigned to one of five ordered buckets. The mapping from KMeans cluster ID to label is established by ranking clusters within the Non-financial segment from lowest to highest `median_scorecard_credit_score`:
+The model assigns each scored company-year to a KMeans cluster. Raw cluster IDs are arbitrary, so the project ranks clusters after training by median `scorecard_credit_score`.
 
-| Risk rank | Default label | Analogy |
+| Risk rank | Recommended label | Interpretation |
+|---:|---|---|
+| 1 | Strong relative credit profile | Stronger financial-risk profile than most companies in the benchmark universe. |
+| 2 | Good credit profile | Generally sound profile, but not the strongest risk bucket. |
+| 3 | Leveraged / elevated risk profile | Noticeable leverage, profitability, liquidity, or cash-flow pressure. |
+| 4 | Weak credit profile | Material financial weakness relative to the benchmark universe. |
+| 5 | Distressed / near-default proxy | Severe financial weakness or distress-like balance-sheet / debt-service profile. |
+
+These are model-relative labels. They are not external credit ratings and are not calibrated to agency notches.
+
+---
+
+## 2. Raw cluster ID vs risk rank
+
+| Field | Meaning | Business interpretation |
 |---|---|---|
-| 1 | 1 — Low risk / investment-grade-like | BBB+ and above |
-| 2 | 2 — Moderate risk / lower-investment-grade-like | BBB− to BB+ |
-| 3 | 3 — Elevated risk / leveraged | BB to B+ |
-| 4 | 4 — High risk / speculative | B to CCC |
-| 5 | 5 — Distressed / near-default proxy | CCC and below |
+| `assigned_cluster` | Raw KMeans cluster ID, usually 0–4 | Technical ID only; unordered. |
+| `risk_rank` | Ordered rank from 1 to 5 | Main ordered risk scale. |
+| `cluster_label` | Human-readable label tied to risk rank | Main report-facing label. |
 
-> **Important:** The analogies are illustrative. The model has not been calibrated against agency rating transitions. See [Limitations](limitations.md).
+Critical rule:
 
-The cluster IDs (integers 0–4) are assigned by KMeans and are **not** inherently ordered. The risk rank is the post-hoc ordering derived from cluster profiles.
+```text
+Never interpret cluster 0, 1, 2, 3, or 4 directly.
+Always interpret risk_rank and cluster_label.
+```
+
+KMeans can assign different numeric cluster IDs after retraining even if the economic structure is similar.
 
 ---
 
-## 2. Output columns reference
+## 3. Core output columns
 
-### 2.1 Core assignment
-
-| Column | Type | Description |
-|---|---|---|
-| `assigned_cluster` | int | Raw KMeans cluster ID (0-indexed, unordered) |
-| `cluster_label` | str | Human-readable risk tier label |
-| `risk_rank` | int | Ordered risk rank 1 (lowest) → 5 (highest) |
-
-### 2.2 Distance and affinity
-
-| Column | Type | Description |
-|---|---|---|
-| `distance_to_assigned_cluster` | float | Euclidean distance from the company's feature vector to its assigned cluster centroid. Lower = more representative of its tier. |
-| `cluster_affinity` | float | Soft affinity for the assigned cluster (exponential kernel, temperature T=1.0). Range [0, 1]; higher = more confident assignment. |
-| `near_default_affinity` | float | Soft affinity specifically for the most distressed cluster (risk rank 5). A value approaching 1.0 signals near-default proximity even if the company is assigned a higher tier. |
-| `cluster_0_affinity … cluster_4_affinity` | float | Full affinity vector across all five clusters. |
-| `cluster_0_distance … cluster_4_distance` | float | Full distance vector across all five clusters. |
-
-**How soft affinity is computed:**
-
-$$a_j = \frac{\exp(-d_j / T)}{\sum_{i=1}^{5} \exp(-d_i / T)}$$
-
-where $d_j$ is the Euclidean distance to centroid $j$ and $T$ is the temperature parameter (default 1.0). A lower temperature sharpens the affinity distribution; a higher temperature spreads it.
-
-**Reading affinity scores:**
-
-- `cluster_affinity > 0.70`: strong, well-centred assignment; the company is a clear representative of its tier.
-- `cluster_affinity 0.40–0.70`: moderate confidence; the company sits between tiers.
-- `cluster_affinity < 0.40`: low confidence; the company is approximately equidistant from multiple centroids and its label should be treated with caution.
-
-### 2.3 Outlook flags (adjacent-bucket diagnostics)
-
-The outlook analysis in `diagnostics.py` computes the company's distance to the immediately stronger (lower risk rank) and immediately weaker (higher risk rank) adjacent clusters and issues a directional flag.
-
-| Column | Description |
+| Column | Meaning |
 |---|---|
-| `upper_bucket_cluster` | Cluster ID of the next-lower-risk adjacent tier |
-| `upper_bucket_label` | Label of that tier |
-| `distance_to_upper_bucket` | Distance to the upper (better) tier centroid |
-| `lower_bucket_cluster` | Cluster ID of the next-higher-risk adjacent tier |
-| `lower_bucket_label` | Label of that tier |
-| `distance_to_lower_bucket` | Distance to the lower (worse) tier centroid |
-| `upper_distance_ratio_to_assigned` | `distance_to_upper_bucket / distance_to_assigned_cluster` |
-| `lower_distance_ratio_to_assigned` | `distance_to_lower_bucket / distance_to_assigned_cluster` |
-| `outlook_flag` | **Positive**, **Neutral**, or **Negative** |
-| `outlook_reason` | Plain-language explanation of the flag |
+| `company_name` | Name used for report display. |
+| `fiscal_year` | Fiscal year or scenario year. |
+| `assigned_cluster` | Raw KMeans technical cluster ID. |
+| `cluster_label` | Business label mapped from risk rank. |
+| `risk_rank` | Ordered risk tier, 1 = strongest, 5 = weakest. |
+| `scorecard_credit_score` | Continuous risk index from 0 to 100. Higher means weaker. |
+| `feature_coverage_pct` | Share of model features available before imputation. |
+| `warning_flags` | Mechanical data or financial red flags. |
+| `guardrail_level` | Highest post-model analyst caution level. |
+| `guardrail_summary` | Short professional explanation of guardrail issues. |
 
-**Outlook flag logic (simplified):**
+---
 
-```
-threshold_band = assigned_distance × 0.15        # 15% neutral band
-upgrade_boundary = assigned_distance × 1.35
-downgrade_boundary = assigned_distance × 1.35
+## 4. Scorecard credit score
 
-if (lower_distance − upper_distance > threshold_band) AND (upper_distance ≤ upgrade_boundary):
-    → Positive   # Closer to a better tier and meaningfully so
+The scorecard credit score is a weighted average of six domain-level risks, scaled to `[0, 100]`:
 
-elif (upper_distance − lower_distance > threshold_band) AND (lower_distance ≤ downgrade_boundary):
-    → Negative   # Closer to a worse tier and meaningfully so
-
-else:
-    → Neutral    # Firmly in the assigned tier
+```text
+score = 100 × Σ(w_d × r_d) / Σ(w_d for available domains)
 ```
 
-> **Important:** The outlook flag is a **static, cross-sectional cluster-position signal**, not a forward-looking forecast. It reflects how the company's current financial profile relates to adjacent cluster centroids. It is not a prediction that the company will migrate to a different tier.
+where:
 
-### 2.4 Feature quality
-
-| Column | Description |
+| Symbol | Meaning |
 |---|---|
-| `feature_coverage_pct` | Share of the six model features that were non-null before imputation. Range [0, 1]. Values below 0.67 indicate imputation is substituting for more than one feature. |
+| `r_d` | domain risk value |
+| `w_d` | domain weight |
 
-### 2.5 Warning flags
+Interpretation:
 
-The `warning_flags` column contains a comma-separated list of structural anomalies detected in the raw or derived financials. A value of `"none"` means no flags were raised.
+| Score range | Broad interpretation |
+|---:|---|
+| 0–20 | Strong model-relative profile |
+| 20–40 | Generally sound profile |
+| 40–60 | Elevated / mixed risk profile |
+| 60–80 | Weak profile |
+| 80–100 | Distress-like profile |
 
-| Flag | Condition |
+These ranges are practical reading aids, not hard rating thresholds.
+
+The score is not itself the KMeans model. It is used to rank clusters and support interpretation.
+
+---
+
+## 5. Distance metrics
+
+KMeans assigns a company to the centroid with the smallest Euclidean distance in the six-dimensional risk-feature space.
+
+| Column | Meaning |
 |---|---|
-| `invalid_assets` | `assets ≤ 0` |
-| `assets_below_model_threshold` | `assets < $1 000 000` (below training minimum) |
-| `liabilities_exceed_assets` | `liabilities_to_assets > 1` |
-| `negative_equity` | `equity_to_assets < 0` |
-| `high_debt_to_assets` | `debt_to_assets > 0.75` |
-| `current_ratio_below_1` | `current_ratio < 1` |
-| `quick_ratio_below_0_5` | `quick_ratio < 0.5` |
-| `interest_coverage_below_1` | `interest_coverage < 1` |
-| `ebitda_interest_coverage_below_1_5` | `ebitda_interest_coverage < 1.5` |
-| `debt_to_ebitda_above_6` | `debt_to_ebitda > 6` |
-| `net_debt_to_ebitda_above_5` | `net_debt_to_ebitda > 5` |
-| `negative_or_zero_ebitda` | `ebitda ≤ 0` |
-| `negative_cfo_to_assets` | `cfo_to_assets < 0` |
+| `distance_to_assigned_cluster` | Distance from company vector to assigned cluster centroid. |
+| `cluster_0_distance` ... `cluster_4_distance` | Distance to each centroid. |
 
-Multiple flags can appear together. They are diagnostic tools, not disqualifiers. A company can legitimately carry several flags and still be a well-understood credit.
+Lower distance means the company is more representative of that cluster.
 
-### 2.6 Scorecard credit score
+Higher distance means the company is less typical and may sit near a boundary or be an outlier.
 
-`scorecard_credit_score` is a continuous index on [0, 100], calculated as a weighted sum of the six domain risk features with domain weights renormalised to available features:
-
-$$\text{score} = 100 \times \frac{\sum_{d} w_d \cdot r_d}{\sum_{d \in \text{available}} w_d}$$
-
-A score of **0** means all available domain features indicate zero risk. A score of **100** means maximum risk across all available dimensions.
-
-This score is **not** a KMeans model input. It is computed after clustering and used to:
-1. Rank the five clusters post-hoc (clusters are sorted by their segment median scorecard score to assign risk ranks 1–5);
-2. Provide a continuous complement to the discrete cluster label for comparison and reporting.
+Because model features are bounded and directionally aligned, distances are more interpretable than they would be on raw financial ratios. Still, distance is relative to the trained model, not an absolute credit-risk measure.
 
 ---
 
-## 3. Reading a scored company: worked example
+## 6. Soft cluster affinity
 
-```
-company_name              : ExampleCorp Inc.
-assigned_cluster          : 2
-cluster_label             : 3 — Elevated risk / leveraged
-risk_rank                 : 3
-cluster_affinity          : 0.58
-near_default_affinity     : 0.07
-distance_to_assigned_cluster : 0.31
-outlook_flag              : Negative
-outlook_reason            : Company is closer to the weaker adjacent bucket...
-scorecard_credit_score    : 54.2
-feature_coverage_pct      : 1.00
-warning_flags             : debt_to_ebitda_above_6, interest_coverage_below_1
+The model converts distances into soft affinities using an exponential distance kernel:
+
+```text
+a_j = exp(-d_j / T) / Σ_i exp(-d_i / T)
 ```
 
-**Reading:**
-- Assigned to tier 3 (Elevated risk) with moderate confidence (affinity 0.58). Not a clean centre-of-cluster assignment.
-- Near-default affinity of 0.07 is low — the company is not imminently proximate to the distressed cluster.
-- **Negative outlook** signals the company's feature profile is meaningfully closer to the tier 4 centroid than to tier 2. Under the current financials, the balance of risk is tilted toward a downgrade-equivalent position.
-- Two structural warning flags: interest cover is below 1× and debt/EBITDA exceeds 6×, both of which drove the debt_service_risk domain to a high value.
-- Full feature coverage — all six domain features were computed without imputation.
+where:
+
+| Symbol | Meaning |
+|---|---|
+| `d_j` | distance to centroid `j` |
+| `T` | temperature parameter |
+| `a_j` | affinity to cluster `j` |
+
+| Column | Meaning |
+|---|---|
+| `cluster_affinity` | Affinity to the assigned cluster. |
+| `near_default_affinity` | Affinity to the weakest/distressed proxy cluster. |
+| `cluster_0_affinity` ... `cluster_4_affinity` | Full affinity vector. |
+
+### Reading affinity
+
+| Affinity | Interpretation |
+|---:|---|
+| Above 0.70 | Clear, well-centered assignment. |
+| 0.40–0.70 | Moderate assignment; company may be between tiers. |
+| Below 0.40 | Borderline or weak assignment; interpret carefully. |
+
+Important:
+
+```text
+Affinity is not probability of default.
+Near-default affinity is not probability of default.
+```
+
+It is a normalized distance-based similarity measure.
 
 ---
 
-## 4. Cluster profile interpretation
+## 7. Near-default affinity
 
-The cluster profile table (output of `build_cluster_profile()`) reports **median** values of all diagnostic ratios for each segment-cluster combination. When interpreting:
+`near_default_affinity` measures how similar the company is to the weakest model cluster. It is useful because a company can be assigned to a non-distressed cluster while still showing some proximity to the distressed centroid.
 
-- The five clusters should show **monotone progressions** for leverage, coverage, and profitability metrics. If cluster 1 (lowest risk) does not show materially lower `debt_to_ebitda` than cluster 5, this is a sign that k selection or threshold calibration may need adjustment.
-- Industry mix (`build_industry_cluster_mix()`) helps confirm that the distressed cluster is not dominated by a single sector, which would indicate a sector-specific feature mis-calibration rather than a cross-sectional risk signal.
-- Representative tickers (`representatives()`) are selected by minimum Euclidean distance to the cluster centroid in feature space — they are the companies whose risk profiles are most typical of the cluster, not necessarily the most prominent names.
+Interpretation:
+
+| Near-default affinity | Reading |
+|---:|---|
+| Low | Company is far from the distressed proxy centroid. |
+| Moderate | Some distress-like features are present. |
+| High | Company resembles the weakest cluster and requires careful review. |
+
+This is not default probability. It is a proximity signal.
 
 ---
 
-*See also: [Methodology](methodology.md) | [Scorer Report Methodology](scorer_report_methodology.md)*
+## 8. Adjacent-bucket outlook
+
+The outlook diagnostic compares the company’s distance to the immediately stronger and weaker adjacent buckets.
+
+| Column | Meaning |
+|---|---|
+| `upper_bucket_cluster` | Raw cluster ID of the next stronger bucket. |
+| `upper_bucket_label` | Label of the next stronger bucket. |
+| `distance_to_upper_bucket` | Distance to stronger adjacent centroid. |
+| `lower_bucket_cluster` | Raw cluster ID of the next weaker bucket. |
+| `lower_bucket_label` | Label of the next weaker bucket. |
+| `distance_to_lower_bucket` | Distance to weaker adjacent centroid. |
+| `outlook_flag` | Positive, Neutral, or Negative. |
+| `outlook_reason` | Plain-language explanation. |
+
+Interpretation:
+
+| Outlook | Meaning |
+|---|---|
+| Positive | Current profile is closer to the stronger adjacent bucket than to the weaker one. |
+| Neutral | Current profile is centered enough in the assigned bucket. |
+| Negative | Current profile is closer to the weaker adjacent bucket than to the stronger one. |
+
+Important:
+
+```text
+The outlook flag is not a forecast.
+```
+
+It does not predict future migration. It only describes the current position relative to adjacent centroids.
+
+---
+
+## 9. Feature coverage
+
+`feature_coverage_pct` reports how many of the six model features were available before imputation.
+
+| Coverage | Interpretation |
+|---:|---|
+| 1.00 | Full model-feature availability. |
+| 0.80–0.99 | Strong coverage. |
+| 0.67–0.79 | Acceptable but should be noted. |
+| Below 0.67 | Weak basis for scoring; manual review required. |
+
+Low coverage means the model may rely heavily on imputed median values. This can pull the company toward average-risk clusters.
+
+---
+
+## 10. Warning flags
+
+Warning flags are mechanical signals generated from raw and derived financials.
+
+Examples:
+
+| Flag | Meaning |
+|---|---|
+| `invalid_assets` | Assets are zero, negative, or unusable. |
+| `assets_below_model_threshold` | Company is below the public-company training size threshold. |
+| `liabilities_exceed_assets` | Balance-sheet liabilities exceed assets. |
+| `negative_equity` | Equity is negative. |
+| `high_debt_to_assets` | Debt/assets is high. |
+| `current_ratio_below_1` | Current liabilities exceed current assets. |
+| `quick_ratio_below_0_5` | Liquid assets are low relative to current liabilities. |
+| `interest_coverage_below_1` | EBIT does not cover interest expense. |
+| `negative_or_zero_ebitda` | EBITDA is zero or negative. |
+| `negative_cfo_to_assets` | Operating cash flow is negative relative to assets. |
+
+Warning flags are not automatic disqualifiers. They are prompts for analyst review.
+
+---
+
+## 11. Guardrails
+
+Guardrails are a professional interpretation layer added after model scoring. They help prevent over-optimistic conclusions when raw financial red flags exist.
+
+| Guardrail level | Meaning |
+|---|---|
+| Clear | No material contradiction detected. |
+| Monitor | Minor weakness; explain but do not overreact. |
+| Caution | Meaningful caveat; qualify the conclusion. |
+| High caution | Material weakness; avoid clean low-risk framing. |
+| Override required | Severe red flag; manual analyst review required. |
+
+A company can have a strong model-relative label and still trigger caution. In that case, the report should explain the tension instead of hiding it.
+
+---
+
+## 12. Cluster profile interpretation
+
+Cluster profile tables summarize median values by cluster. A credible credit-risk clustering should show reasonable progression across risk ranks.
+
+Expected patterns:
+
+| Metric family | Expected movement from rank 1 to rank 5 |
+|---|---|
+| Leverage | Worsens |
+| Liquidity | Worsens |
+| Coverage | Worsens |
+| Profitability | Worsens |
+| Operating cash flow | Worsens |
+| Structural distress | Increases |
+
+The progression does not need to be perfect for every ratio, because real companies are mixed. But the overall profile should make financial sense.
+
+---
+
+## 13. Worked example
+
+Example output:
+
+```text
+company_name: ExampleCorp
+risk_rank: 3
+cluster_label: 3 - Leveraged / elevated risk profile
+cluster_affinity: 0.58
+near_default_affinity: 0.07
+scorecard_credit_score: 54.2
+outlook_flag: Negative
+feature_coverage_pct: 1.00
+warning_flags: debt_to_ebitda_above_6, interest_coverage_below_1
+guardrail_level: High caution
+```
+
+Interpretation:
+
+The company is assigned to the elevated-risk bucket with moderate affinity. It is not close to the distressed proxy cluster, but the negative outlook and guardrail flags show that the company is positioned closer to a weaker adjacent bucket than to a stronger one. Interest coverage below 1x and debt/EBITDA above 6x should dominate the analyst narrative.
+
+---
+
+## 14. Common incorrect interpretations
+
+Do not say:
+
+```text
+The model rated the company BB.
+```
+
+Say:
+
+```text
+The company is assigned to a model-relative elevated-risk bucket.
+```
+
+Do not say:
+
+```text
+Near-default affinity of 20% means 20% probability of default.
+```
+
+Say:
+
+```text
+Near-default affinity indicates relative proximity to the weakest cluster centroid.
+```
+
+Do not say:
+
+```text
+Negative outlook means the company will deteriorate.
+```
+
+Say:
+
+```text
+Negative outlook means the current financial profile is closer to the weaker adjacent bucket.
+```
+
+Do not say:
+
+```text
+Cluster 4 is always the worst cluster.
+```
+
+Say:
+
+```text
+Raw cluster IDs are arbitrary; the ordered risk rank is the meaningful scale.
+```
+
+---
+
+## 15. Bottom line
+
+The model output is best read as:
+
+```text
+structured, model-relative financial-risk benchmarking supported by diagnostics and guardrails
+```
+
+not as:
+
+```text
+external credit rating or default prediction
+```

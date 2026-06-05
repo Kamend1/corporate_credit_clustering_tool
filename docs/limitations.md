@@ -1,109 +1,331 @@
 # Limitations
 
-This document catalogs the known limitations of the Corporate Credit Clustering Tool. Understanding these boundaries is essential for appropriate use of the model outputs.
+## Purpose of this document
+
+This document defines the known limitations of the Corporate Credit Clustering Tool and explains how they should be mitigated or disclosed. It is intended for future development, professional project use, and academic transparency.
+
+The model should be presented as a **domain-guided unsupervised credit-risk benchmarking tool**, not as a formal credit rating system.
 
 ---
 
-## 1. This is not a formal credit rating
+## 1. Not a formal credit rating
 
-The cluster labels (e.g. "3 — Elevated risk / leveraged") are **interpretive analogies**, not certified credit opinions. They have not been calibrated against agency rating transitions, validated against historical default events, or reviewed by a credit rating analyst. They must not be used as a substitute for formal due diligence, regulated credit assessment, or investment advice.
+The model produces relative credit-risk labels derived from KMeans cluster profiles. These labels are not certified credit opinions.
 
----
+They have not been calibrated against:
 
-## 2. Survivorship bias
+- official agency rating histories;
+- rating transitions;
+- observed defaults;
+- bankruptcy filings;
+- CDS spreads;
+- bond yields.
 
-The training universe consists of companies that filed annual reports on SEC EDGAR between 2020 and 2025 and remained in the XBRL database throughout the scraping window. Companies that:
+Therefore, the output must not be used as:
 
-- defaulted and were delisted before the data pull;
-- were acquired and ceased to file independently;
-- were voluntarily dissolved or went private;
+```text
+formal credit rating
+lending approval decision
+investment recommendation
+probability of default estimate
+regulatory credit assessment
+```
 
-are **not represented** in the training data. This systematically under-populates the highest-risk end of the credit quality spectrum. The "Distressed / near-default proxy" cluster is, in practice, a cluster of financially stressed but still-operating companies — not a cluster of companies that actually defaulted.
+Correct use:
 
-**Practical implication:** The model may assign a company a lower risk rank than a model trained on a complete historical panel that includes eventual defaulters would produce. Stress scores should be read with this in mind.
-
----
-
-## 3. Domain-guided, not purely unsupervised
-
-The feature transformation pipeline in `features.py` encodes credit-domain knowledge through:
-
-- **Monotone risk thresholds** in `RISK_THRESHOLDS` (e.g. `interest_coverage good = 3.0, bad = 1.0`) that determine how each ratio is mapped to a [0, 1] risk score;
-- **Sub-component weights** within each domain feature (e.g. `leverage_risk = 0.40 × liabilities_risk + 0.35 × debt_load_risk + 0.25 × equity_buffer_risk`);
-- **Domain weights** in `SCORECARD_DOMAIN_WEIGHTS` (leverage 25%, liquidity 20%, etc.).
-
-These choices embed the analyst's prior about what constitutes credit risk **before** any clustering algorithm runs. KMeans then groups companies in this pre-structured space. The model is best described as **domain-guided clustering**, not pure unsupervised discovery. A different valid set of thresholds and weights would produce different clusters.
-
----
-
-## 4. Fixed scorecard weights are unvalidated
-
-The domain weights and sub-component weights are set by judgment and have not been:
-
-- empirically optimised against a labelled dataset;
-- validated through sensitivity analysis demonstrating label stability under weight perturbation;
-- compared against a data-driven dimensionality reduction (e.g. PCA-derived weights).
-
-See [Sensitivity Analysis](sensitivity_analysis.md) for guidance on how to test weight sensitivity.
+```text
+screening, benchmarking, exploratory analysis, model demonstration, analyst-support diagnostic
+```
 
 ---
 
-## 5. US-listed, large-to-mid-cap bias
+## 2. Domain-guided, not purely unsupervised
 
-The training universe is constrained to SEC EDGAR filers, which are predominantly US-domiciled companies. The minimum assets filter (`PUBLIC_COMPANY_MIN_ASSETS = $1 000 000`) further skews the training population toward established, operationally stable companies. Specifically:
+The project uses unsupervised clustering, but the feature space is heavily shaped by credit-domain knowledge.
 
-- Micro-cap companies (below ~$10M assets) are sparse in the training data.
-- Non-US companies with US ADR listings are included but may follow different accounting conventions.
-- Private companies, non-US companies, and companies in IFRS jurisdictions are **outside the training distribution**.
+Domain knowledge enters through:
 
-When scoring a non-US or private company using Notebook 03, the FX conversion flag (`fx_to_model_currency`) can normalise monetary units, but the underlying thresholds and cluster centroids remain calibrated to the US public-company population.
+- financial ratio selection;
+- risk transformation thresholds;
+- component risk formulas;
+- domain-level aggregation;
+- scorecard weights used for post-hoc cluster ranking;
+- guardrail rules.
 
----
+This is not a weakness if disclosed correctly. It makes the model interpretable. But the correct description is:
 
-## 6. Point-in-time labels, not through-the-cycle
+```text
+domain-guided unsupervised clustering
+```
 
-The model produces a **point-in-time** credit quality label for a single fiscal year's financial data. It is not a through-the-cycle rating that smooths over economic cycles.
+not:
 
-The training panel spans 2020–2025, which includes:
-- The COVID-19 shock (2020–2021) and subsequent distress spike;
-- The recovery and interest rate normalisation period (2022–2024).
+```text
+pure unsupervised discovery of credit risk from raw data
+```
 
-A company appearing in the training data in 2020 and again in 2023 may contribute to different clusters in different years. The model does not track migration paths; it only observes cross-sectional financial position at a given date.
-
----
-
-## 7. Missing-value imputation may distort low-data rows
-
-For rows with fewer available features, missing values are imputed to the segment median before clustering. This pulls low-coverage rows toward the centre of the feature distribution, regardless of their true risk profile. A company with almost no available data will appear at an average risk level rather than being flagged as unclassifiable.
-
-The `feature_coverage_pct` output column quantifies this risk per row. Rows with `feature_coverage_pct < 0.67` (fewer than 4 of 6 model features available) should be interpreted with caution.
+A different valid set of thresholds and weights could produce different clusters.
 
 ---
 
-## 8. Financial companies are excluded
+## 3. Survivorship bias
 
-Companies with SIC codes classified as Financial / Insurance / Real Estate (`financial_flag = "Financial"`) are excluded from both model training and scoring. The risk thresholds and leverage-based domain features are not appropriate for banks, insurers, or REITs, where high leverage is structurally expected and EBITDA is not a meaningful concept.
+The training universe contains companies available in the SEC EDGAR/XBRL data pull. Companies that defaulted, delisted, were acquired, dissolved, or stopped filing before the relevant data window may be missing.
 
-Applying the model to a financial company will produce misleading results.
+Impact:
 
----
+- The highest-risk population is likely under-represented.
+- The distressed / near-default proxy cluster contains financially weak surviving companies, not necessarily actual defaulters.
+- The model may understate true distress risk relative to a dataset containing historical default outcomes.
 
-## 9. EBITDA availability varies
+Mitigation:
 
-EBITDA is calculated as `operating_income + depreciation_amortization` when the direct EBITDA concept is not reported. If both `operating_income` and `depreciation_amortization` are missing, the EBITDA-dependent sub-components of `debt_service_risk` fall back to the legacy formula (`0.60 × coverage_risk + 0.40 × fcf_risk`), which excludes the EBITDA-based risk factors entirely. Companies with this fallback receive a slightly different effective feature weighting.
-
----
-
-## 10. No external ground-truth validation
-
-The cluster labels have not been validated against:
-
-- known agency ratings for the same companies in the same fiscal years;
-- subsequent default or distress events;
-- market-implied credit signals (CDS spreads, bond yields).
-
-The only validation in the project is internal: the cluster profiles are inspected for monotone progression of key ratios across the five risk tiers, and representative tickers are reviewed for plausibility. This is a qualitative sanity check, not a statistical validation.
+- disclose survivorship bias;
+- avoid probability-of-default language;
+- treat the weakest cluster as a stress proxy;
+- consider adding historical delisted/defaulted company data in future versions.
 
 ---
 
-*See also: [Methodology](methodology.md) | [Sensitivity Analysis](sensitivity_analysis.md)*
+## 4. US public-company bias
+
+The training universe is based on SEC filers. It is therefore biased toward US-listed public companies, including some ADRs and foreign issuers that file with the SEC.
+
+Private companies, SMEs, Bulgarian companies, and IFRS-only companies may differ in:
+
+- accounting definitions;
+- disclosure granularity;
+- capital structure;
+- access to refinancing;
+- industry mix;
+- size distribution;
+- survival patterns.
+
+Impact:
+
+Scoring a private or non-US company is useful as a benchmark, but it is partly out-of-distribution.
+
+Mitigation:
+
+- use feature coverage and warning flags;
+- disclose that the benchmark is SEC-public-company based;
+- avoid direct external rating language;
+- consider future regional/private-company calibration.
+
+---
+
+## 5. Point-in-time model, not through-the-cycle rating
+
+The model scores a company based on one fiscal-year financial profile. It does not smooth through economic cycles and does not explicitly model migration paths.
+
+The current training period includes unusual macroeconomic conditions, including the COVID shock, recovery, inflation, and higher interest-rate environment.
+
+Impact:
+
+- The same issuer can appear in different risk clusters in different years.
+- A strong year can improve the label even if long-term business risk remains high.
+- A weak year can worsen the label even if the company has strategic support or temporary shock effects.
+
+Mitigation:
+
+- use multi-year scoring where available;
+- analyze movement over time;
+- present labels as point-in-time financial profile signals;
+- do not present them as through-the-cycle credit ratings.
+
+---
+
+## 6. Missing data and imputation risk
+
+The KMeans pipeline uses imputation for missing model features. Median imputation can pull low-coverage companies toward the center of the distribution.
+
+Impact:
+
+- A company with missing debt-service data may appear less risky than it truly is.
+- Low-data observations may be assigned to middle clusters because imputed values resemble typical companies.
+- Feature coverage becomes part of interpretation.
+
+Mitigation:
+
+- show `feature_coverage_pct` in outputs;
+- flag low coverage in reports;
+- avoid strong conclusions when coverage is weak;
+- future improvement: add missingness indicators or stricter minimum coverage.
+
+Recommended interpretation:
+
+| Feature coverage | Interpretation |
+|---:|---|
+| 1.00 | Strong input completeness |
+| 0.80–0.99 | Generally usable |
+| 0.67–0.79 | Interpret with caution |
+| below 0.67 | Weak basis for scoring; manual review needed |
+
+---
+
+## 7. Financial companies excluded
+
+The model is designed for non-financial companies. It should not be applied to banks, insurers, or financial institutions.
+
+Reason:
+
+- high leverage is normal for banks;
+- deposits and financial liabilities are operating inputs, not distress signals;
+- EBITDA is not meaningful for banks or insurers;
+- liquidity ratios are interpreted differently;
+- regulatory capital frameworks matter.
+
+Mitigation:
+
+- keep SIC-based financial exclusion;
+- add a separate financial-institution model in a future version;
+- do not manually override this limitation for convenience.
+
+---
+
+## 8. EBITDA availability and reconstruction
+
+EBITDA is not always directly reported. The project may estimate EBITDA as:
+
+```text
+operating_income + depreciation_amortization
+```
+
+If the required inputs are missing, EBITDA-dependent ratios may be unavailable and the debt-service feature may fall back to legacy coverage/FCF logic.
+
+Impact:
+
+- companies with direct EBITDA and companies with reconstructed EBITDA may not be perfectly comparable;
+- missing EBITDA weakens debt-service interpretation;
+- incorrect `operating_income` mapping can materially distort EBITDA and interest coverage.
+
+Mitigation:
+
+- document whether EBITDA is direct or reconstructed;
+- ensure `operating_income` means EBIT, not EBT;
+- disclose missing EBITDA effects in reports;
+- consider separate EBITDA quality flags in future versions.
+
+---
+
+## 9. No qualitative credit factors
+
+The model uses financial statement data only. It does not include:
+
+- management quality;
+- ownership support;
+- corporate governance;
+- customer concentration;
+- supplier risk;
+- covenant package;
+- collateral;
+- refinancing access;
+- market position;
+- sector outlook;
+- country risk;
+- legal disputes.
+
+Impact:
+
+The model can miss both upside and downside credit factors that a human analyst would consider.
+
+Mitigation:
+
+Use the model as a structured financial diagnostic, then layer qualitative analysis separately.
+
+---
+
+## 10. No external ground-truth validation yet
+
+The current project focuses on internal validation:
+
+- cluster metrics;
+- financial monotonicity;
+- representative company review;
+- alternative clustering comparisons;
+- sensitivity analysis plan;
+- guardrails.
+
+It does not yet perform supervised validation against external ratings or observed defaults.
+
+Impact:
+
+The labels are plausible and interpretable, but not empirically calibrated to default risk.
+
+Mitigation:
+
+Future versions should compare cluster labels with:
+
+- agency ratings;
+- bond yields;
+- CDS spreads;
+- bankruptcy events;
+- delisting/default databases.
+
+---
+
+## 11. Guardrails are diagnostics, not automatic overrides
+
+Guardrails detect specific red flags such as negative equity, weak coverage, high leverage, or poor liquidity. They are not a second model and do not automatically change cluster assignment.
+
+Impact:
+
+A company may remain assigned to a relatively strong cluster while guardrails still require caution.
+
+Mitigation:
+
+- show guardrails clearly in reports;
+- explain the contradiction when it occurs;
+- use human judgment before drawing a commercial conclusion.
+
+---
+
+## 12. Mitigation summary table
+
+| Limitation | Impact | Current mitigation | Future improvement |
+|---|---|---|---|
+| Not a formal rating | Overclaiming risk | Explicit disclaimers and cautious labels | External rating/default calibration |
+| Domain-guided features | Analyst assumptions affect output | Thresholds documented in config manual | Sensitivity testing and data-driven calibration |
+| Survivorship bias | Weakest risk tail under-represented | Disclose distressed cluster as proxy | Add delisted/defaulted companies |
+| US public-company bias | Private/non-US scoring is out-of-distribution | FX normalization and warnings | Regional/private benchmark model |
+| Missing data | Median imputation may centralize observations | Feature coverage output | Missingness indicators / stricter coverage |
+| Financial companies excluded | Model invalid for banks/insurers | SIC-based exclusion | Separate financial-sector model |
+| EBITDA inconsistency | Debt-service metrics can vary in quality | EBITDA fallback logic | EBITDA quality flags |
+| No qualitative factors | Incomplete credit view | Guardrails and report limitations | Analyst qualitative overlay |
+| No external validation | Labels not calibrated | Internal metrics and profiles | Ratings/default/bond spread validation |
+
+---
+
+## 13. Correct wording for reports and notebooks
+
+Use:
+
+```text
+model-relative credit-risk bucket
+financial-risk profile
+cluster-derived risk label
+credit screening tool
+analyst-support diagnostic
+```
+
+Avoid:
+
+```text
+credit rating
+default probability
+investment grade rating
+bank approval model
+objective PD model
+```
+
+---
+
+## 14. Bottom line
+
+The model is useful because it is transparent, reproducible, financially interpretable, and technically aligned with unsupervised learning. Its limitations are manageable if the output is framed correctly.
+
+The correct conclusion is:
+
+```text
+This project provides structured credit-risk benchmarking, not a replacement for professional credit judgment.
+```

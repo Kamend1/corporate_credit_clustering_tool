@@ -1,28 +1,54 @@
 # EDGAR Notebook Operating Runbook
 
-This runbook explains how to operate the EDGAR data acquisition notebook safely.
+## Purpose of this document
 
-Notebook location:
+This runbook explains how to operate Notebook 01 safely and reproducibly. It is designed for project maintainers, future users, and reviewers who need to understand the EDGAR data acquisition workflow without accidentally triggering a large data download.
+
+Notebook 01 is the data acquisition layer of the Corporate Credit Clustering Tool. The final project notebooks should still contain their own explanatory markdown; this file is the operational reference.
+
+---
+
+## 1. Notebook location
+
+Use the actual notebook filename in the repository. Recommended current naming convention:
+
+```text
+notebooks/01_obtain_model_training_data_EDGAR.ipynb
+```
+
+If the repository still uses:
 
 ```text
 notebooks/01_obtain_model_training_data_EDGAR_cleaned.ipynb
 ```
 
-The notebook assumes it is stored inside the `notebooks/` folder, so the project root is calculated as:
+rename references consistently across README, docs, and notebook markdown.
+
+The notebook assumes it is run from inside the `notebooks/` folder, so project root is usually calculated as:
 
 ```python
 PROJECT_ROOT = Path.cwd().parent
 ```
 
-Generated data is written under:
+---
 
-```text
-project-root/data/
-```
+## 2. Legal and data-use note
+
+The notebook uses public SEC EDGAR data. It must not attempt to bypass access controls, scrape private data, or overload public systems.
+
+Operational requirements:
+
+- use a valid SEC User-Agent;
+- keep request behavior reasonable;
+- do not run accidental full downloads;
+- do not commit large generated data artifacts to GitHub;
+- document data source and limitations.
+
+This supports the final project requirement for legal and safe code execution.
 
 ---
 
-## 1. Start Jupyter
+## 3. Start Jupyter
 
 From the repository root:
 
@@ -30,72 +56,77 @@ From the repository root:
 jupyter lab
 ```
 
-Then open:
+or:
 
-```text
-notebooks/01_obtain_model_training_data_EDGAR_cleaned.ipynb
+```bash
+jupyter notebook
 ```
+
+Then open Notebook 01.
 
 ---
 
-## 2. Install Required Dependencies
+## 4. Install dependencies
 
-From your active Python environment:
-
-```bash
-pip install pandas numpy requests tqdm duckdb pyarrow fastparquet edgartools
-```
-
-If the project already has a `requirements.txt`, prefer:
+Preferred:
 
 ```bash
 pip install -r requirements.txt
 ```
 
+Notebook 01 specifically needs packages such as:
+
+```bash
+pip install pandas numpy requests tqdm duckdb pyarrow edgartools
+```
+
+If parquet support errors occur, confirm whether the project uses `pyarrow`, `fastparquet`, or both.
+
 ---
 
-## 3. Expected Repository Structure
+## 5. Intended local data structure
 
-The notebook creates missing data folders automatically, but the intended structure is:
+Generated data should live under `data/` and should generally not be committed.
 
 ```text
 project-root/
 ├── notebooks/
-│   └── 01_obtain_model_training_data_EDGAR_cleaned.ipynb
+│   └── 01_obtain_model_training_data_EDGAR.ipynb
 ├── data/
 │   ├── raw/
 │   ├── interim/
 │   ├── processed/
 │   ├── raw_financial_facts_parquet/
 │   └── duckdb/
+├── docs/
+├── src/
 ├── README.md
+├── requirements.txt
 ├── LICENSE
 └── .gitignore
 ```
 
 ---
 
-## 4. SEC User-Agent Requirement
+## 6. SEC User-Agent requirement
 
-Before running any SEC/EDGAR request, replace any placeholder user-agent value:
+Before running any SEC request, replace placeholder values such as:
 
 ```python
 "User-Agent": "your_email@domain.com"
 ```
 
-Use a real contact identifier, for example:
+Use a real contact identifier.
 
-```python
-"User-Agent": "your.name@example.com"
-```
-
-Do not leave the placeholder in the notebook.
+Do not leave placeholders in submitted code.
 
 ---
 
-## 5. Main Control Flags
+## 7. Main control flags
 
-The notebook is controlled through execution flags near the top.
+The notebook should be controlled through explicit flags near the top.
+
+Typical flags:
 
 ```python
 RUN_EDGAR_SANITY_CHECK = False
@@ -113,32 +144,28 @@ TARGET_MIN_FISCAL_YEAR = 2020
 TARGET_MAX_FISCAL_YEAR = 2025
 ```
 
-The dangerous flag is:
+The dangerous operation is:
 
 ```python
 RUN_RAW_EDGAR_FACT_DOWNLOAD = True
 ```
 
-A full download also requires:
+A full download should require both:
 
 ```python
 MAX_TICKERS_FOR_DOWNLOAD = None
 CONFIRM_FULL_EDGAR_DOWNLOAD = True
 ```
 
-This is intentional. It prevents accidental multi-gigabyte EDGAR downloads.
+This double-control mechanism prevents accidental multi-hour or multi-gigabyte runs.
 
 ---
 
-# Operating Modes
+## 8. Recommended execution modes
 
----
+### Mode A — Safe review mode
 
-## Mode A — Safe Review Run
-
-Use this mode when you only want to inspect the notebook without downloading large data.
-
-### Flags
+Purpose: inspect notebook logic without downloading large data.
 
 ```python
 RUN_EDGAR_SANITY_CHECK = False
@@ -151,30 +178,17 @@ RUN_INCREMENTAL_REFRESH_AUDIT = False
 
 MAX_TICKERS_FOR_DOWNLOAD = 10
 CONFIRM_FULL_EDGAR_DOWNLOAD = False
-
-TARGET_MIN_FISCAL_YEAR = 2020
-TARGET_MAX_FISCAL_YEAR = 2025
 ```
 
-### How to run
+Expected behavior: no major network data pull.
 
-Run cells top to bottom.
-
-### Expected result
-
-No major EDGAR download should be triggered.
-
-Some later cells may fail if local data files do not exist yet. That is expected in review mode.
+Some later cells may fail if local generated data does not exist. That is acceptable in review mode if clearly documented.
 
 ---
 
-## Mode B — Small Smoke Test
+### Mode B — Small smoke test
 
-Use this mode before any full download.
-
-It validates the pipeline on a small number of tickers.
-
-### Flags
+Purpose: test the complete pipeline on a small ticker sample.
 
 ```python
 RUN_EDGAR_SANITY_CHECK = True
@@ -187,45 +201,27 @@ RUN_INCREMENTAL_REFRESH_AUDIT = False
 
 MAX_TICKERS_FOR_DOWNLOAD = 10
 CONFIRM_FULL_EDGAR_DOWNLOAD = False
-
-TARGET_MIN_FISCAL_YEAR = 2020
-TARGET_MAX_FISCAL_YEAR = 2025
 ```
 
-### How to run
-
-Run all cells top to bottom.
-
-### Expected outputs
+Expected outputs:
 
 ```text
 data/raw/fundamental_universe.csv
 data/interim/fundamental_universe_ticker_cik_sic.csv
 data/processed/03_fundamental_universe_ticker_sic_industry.csv
 data/raw/raw_financial_facts.csv
-data/raw_financial_facts_parquet/part_00000.parquet
+data/raw_financial_facts_parquet/*.parquet
 data/duckdb/financials.duckdb
 data/processed/edgar_download_manifest.csv
 ```
 
-### Purpose
-
-This confirms that:
-
-- SEC requests work.
-- Ticker universe generation works.
-- SIC enrichment works.
-- Raw EDGAR facts extraction works.
-- CSV-to-parquet conversion works.
-- DuckDB can query the parquet dataset.
+This is the safest mode for demonstrating functionality.
 
 ---
 
-## Mode C — Full Initial EDGAR Download
+### Mode C — Full initial EDGAR download
 
-Use this only when you intentionally want the large EDGAR pull.
-
-### Flags
+Purpose: build the full raw dataset intentionally.
 
 ```python
 RUN_EDGAR_SANITY_CHECK = True
@@ -238,50 +234,17 @@ RUN_INCREMENTAL_REFRESH_AUDIT = False
 
 MAX_TICKERS_FOR_DOWNLOAD = None
 CONFIRM_FULL_EDGAR_DOWNLOAD = True
-
-TARGET_MIN_FISCAL_YEAR = 2020
-TARGET_MAX_FISCAL_YEAR = 2025
 ```
 
-### How to run
+Use only when the full data build is intentional.
 
-Run all cells top to bottom.
-
-### Important behavior
-
-The raw facts download is intended to be resumable.
-
-If the notebook is interrupted, rerun it later. The download logic checks completed tickers from:
-
-```text
-data/raw/raw_financial_facts.csv
-```
-
-and skips tickers already present.
-
-### After download finishes
-
-Make sure parquet conversion runs:
-
-```python
-RUN_CSV_TO_PARQUET = True
-```
-
-This creates or refreshes:
-
-```text
-data/raw_financial_facts_parquet/
-```
-
-DuckDB reads from the parquet folder.
+The download should be resumable by checking completed tickers in local raw data.
 
 ---
 
-## Mode D — Update Available Tickers Only
+### Mode D — Incremental ticker audit
 
-Use this when you want to check whether new EDGAR tickers appeared, without downloading company facts.
-
-### Flags
+Purpose: check if new tickers appeared without downloading full company facts.
 
 ```python
 RUN_EDGAR_SANITY_CHECK = False
@@ -291,183 +254,52 @@ RUN_SIC_ENRICHMENT = False
 RUN_RAW_EDGAR_FACT_DOWNLOAD = False
 RUN_CSV_TO_PARQUET = False
 RUN_INCREMENTAL_REFRESH_AUDIT = True
-
-MAX_TICKERS_FOR_DOWNLOAD = 10
-CONFIRM_FULL_EDGAR_DOWNLOAD = False
 ```
 
-### How to run
-
-Run these sections:
-
-```text
-1. Imports
-2. Path configuration
-3. Flag configuration
-4. Existing universe load, if required
-5. Incremental refresh audit
-```
-
-### Expected output
-
-The notebook saves a dated ticker snapshot:
+Expected output:
 
 ```text
 data/raw/company_tickers_YYYY-MM-DD.csv
 ```
 
-It also prints:
-
-```text
-New tickers: X
-Removed / changed tickers: Y
-```
-
-### Important note
-
-This mode does not automatically download facts for new tickers. It only identifies ticker-universe changes.
+This mode identifies new or changed tickers, but does not automatically download their facts.
 
 ---
 
-## Mode E — Download Only Newly Appeared Tickers
+### Mode E — Download only new tickers
 
-Use this after running the ticker update audit.
-
-### Step 1 — Run the ticker audit
-
-Use Mode D first.
-
-This creates the `new_tickers` list.
-
-### Step 2 — Change ticker selection in the raw download cell
-
-Temporarily change:
+Recommended future pattern:
 
 ```python
-tickers = fundamental_df["ticker"].dropna().unique().tolist()
+DOWNLOAD_MODE = "new_tickers"
 ```
 
-to:
+rather than manually editing the ticker selection line.
+
+If this control does not yet exist, the notebook may require temporarily setting:
 
 ```python
 tickers = new_tickers
 ```
 
-### Step 3 — Set download flags
-
-```python
-RUN_RAW_EDGAR_FACT_DOWNLOAD = True
-RUN_CSV_TO_PARQUET = True
-
-MAX_TICKERS_FOR_DOWNLOAD = None
-CONFIRM_FULL_EDGAR_DOWNLOAD = True
-```
-
-Keep these off unless you are rebuilding the full universe:
-
-```python
-RUN_TICKER_UNIVERSE_BUILD = False
-RUN_SIC_TABLE_DOWNLOAD = False
-RUN_SIC_ENRICHMENT = False
-```
-
-### Step 4 — Run relevant sections
-
-Run:
-
-```text
-1. Imports/configuration
-2. Load final universe
-3. Incremental audit
-4. Raw EDGAR fact download
-5. CSV to parquet
-6. DuckDB view creation
-7. Manifest generation
-```
-
-### Important note
-
-The current parquet folder is treated as generated output. After adding new facts, rebuild parquet from the updated raw CSV.
+Manual edits should be replaced with a proper `DOWNLOAD_MODE` control in future development.
 
 ---
 
-## Mode F — Update New Fiscal Periods / New Annual Reports
+### Mode F — Refresh new fiscal periods
 
-Use this when companies have reported a new annual year.
-
-Example: you have data through 2025 and now want 2026.
-
-### Step 1 — Update target fiscal year
+Purpose: add a new fiscal year, for example extending from 2025 to 2026.
 
 ```python
-TARGET_MIN_FISCAL_YEAR = 2020
 TARGET_MAX_FISCAL_YEAR = 2026
-```
-
-### Step 2 — Enable incremental audit
-
-```python
 RUN_INCREMENTAL_REFRESH_AUDIT = True
 ```
 
-### Step 3 — Run manifest and stale ticker detection
+The refresh logic should identify stale tickers whose max fiscal year is below the target year.
 
-Run:
+Important: the resume logic must not skip a ticker merely because it exists in the raw CSV. It should skip only if the target fiscal year already exists for that ticker.
 
-```text
-1. Imports/configuration
-2. DuckDB view creation
-3. Manifest creation
-4. Stale ticker detection
-```
-
-The stale ticker logic checks:
-
-```python
-manifest["max_fiscal_year"] < TARGET_MAX_FISCAL_YEAR
-```
-
-and produces:
-
-```python
-stale_tickers
-```
-
-### Step 4 — Change ticker selection in raw download cell
-
-Temporarily change:
-
-```python
-tickers = fundamental_df["ticker"].dropna().unique().tolist()
-```
-
-to:
-
-```python
-tickers = stale_tickers
-```
-
-### Step 5 — Set download flags
-
-```python
-RUN_RAW_EDGAR_FACT_DOWNLOAD = True
-RUN_CSV_TO_PARQUET = True
-
-MAX_TICKERS_FOR_DOWNLOAD = None
-CONFIRM_FULL_EDGAR_DOWNLOAD = True
-```
-
-### Step 6 — Fix resume logic for fiscal-period refresh
-
-The existing full-download resume logic skips any ticker already present in the raw CSV:
-
-```python
-completed = set(existing["ticker"].unique())
-```
-
-For stale-period refresh, this is too aggressive.
-
-Use this instead:
+Safer logic:
 
 ```python
 completed = set(
@@ -478,26 +310,71 @@ completed = set(
 )
 ```
 
-This skips only tickers that already have the target fiscal year locally.
+---
 
-### Step 7 — Run relevant sections
+### Mode G — Examiner / reviewer mode
 
-Run:
+Purpose: allow Dancho or another reviewer to run the notebook safely without triggering a huge EDGAR pull.
 
-```text
-1. Raw EDGAR fact download
-2. CSV to parquet
-3. DuckDB view creation
-4. Credit model base creation
-5. Concept coverage audit
-6. Manifest update
+Recommended settings:
+
+```python
+RUN_EDGAR_SANITY_CHECK = True
+RUN_TICKER_UNIVERSE_BUILD = False
+RUN_SIC_TABLE_DOWNLOAD = False
+RUN_SIC_ENRICHMENT = False
+RUN_RAW_EDGAR_FACT_DOWNLOAD = False
+RUN_CSV_TO_PARQUET = False
+RUN_INCREMENTAL_REFRESH_AUDIT = False
+
+MAX_TICKERS_FOR_DOWNLOAD = 10
+CONFIRM_FULL_EDGAR_DOWNLOAD = False
 ```
+
+Expected behavior:
+
+- no full download;
+- no large generated files;
+- notebook can explain the process;
+- pre-generated sample outputs or documented output examples should be used where possible.
+
+This mode is important for final-project grading because the examiner should not need to run a large data engineering job to understand the project.
 
 ---
 
-# Generated Artifacts
+## 9. Recommended future notebook control improvement
 
-The notebook may generate these files:
+Add a single explicit mode variable:
+
+```python
+DOWNLOAD_MODE = "review"  # review, smoke_test, full, new_tickers, stale_periods, manual
+MANUAL_TICKERS = []
+```
+
+Then select tickers with:
+
+```python
+if DOWNLOAD_MODE == "full":
+    tickers = fundamental_df["ticker"].dropna().unique().tolist()
+elif DOWNLOAD_MODE == "new_tickers":
+    tickers = new_tickers
+elif DOWNLOAD_MODE == "stale_periods":
+    tickers = stale_tickers
+elif DOWNLOAD_MODE == "manual":
+    tickers = MANUAL_TICKERS
+elif DOWNLOAD_MODE in {"review", "smoke_test"}:
+    tickers = fundamental_df["ticker"].dropna().unique().tolist()[:MAX_TICKERS_FOR_DOWNLOAD]
+else:
+    raise ValueError(f"Unknown DOWNLOAD_MODE: {DOWNLOAD_MODE}")
+```
+
+This removes fragile manual edits and makes the notebook more operator-grade.
+
+---
+
+## 10. Generated artifacts
+
+Notebook 01 may create:
 
 ```text
 data/raw/fundamental_universe.csv
@@ -514,19 +391,22 @@ data/raw_financial_facts_parquet/*.parquet
 data/duckdb/financials.duckdb
 ```
 
+These are generated artifacts, not source code.
+
 ---
 
-# Git Policy
+## 11. Git policy
 
-Commit notebook and metadata:
+Commit:
 
 ```text
-notebooks/01_obtain_model_training_data_EDGAR_cleaned.ipynb
+notebooks/01_obtain_model_training_data_EDGAR.ipynb
+docs/EDGAR_notebook_operating_runbook.md
 data/README.md
 .gitignore
 ```
 
-Do not commit generated data:
+Do not commit large generated data:
 
 ```text
 data/raw/
@@ -538,7 +418,7 @@ data/duckdb/
 *.parquet
 ```
 
-Recommended `.gitignore` entries:
+Recommended `.gitignore`:
 
 ```gitignore
 data/raw/
@@ -554,51 +434,15 @@ data/duckdb/
 
 ---
 
-# Recommended Next Notebook Improvement
+## 12. Final-project communication note
 
-The current notebook works, but new-ticker and stale-period modes still require manually changing the ticker selection line.
+Notebook 01 should explain:
 
-The clean next step is to add:
+- what EDGAR/XBRL is;
+- why public financial statements are used;
+- why large downloads are guarded by flags;
+- what data is stored locally;
+- why generated data is excluded from Git;
+- how the output supports Notebook 02.
 
-```python
-DOWNLOAD_MODE = "full"  # "full", "new_tickers", "stale_periods", "manual"
-MANUAL_TICKERS = []
-```
-
-Then replace manual ticker selection with:
-
-```python
-if DOWNLOAD_MODE == "full":
-    tickers = fundamental_df["ticker"].dropna().unique().tolist()
-elif DOWNLOAD_MODE == "new_tickers":
-    tickers = new_tickers
-elif DOWNLOAD_MODE == "stale_periods":
-    tickers = stale_tickers
-elif DOWNLOAD_MODE == "manual":
-    tickers = MANUAL_TICKERS
-else:
-    raise ValueError(f"Unknown DOWNLOAD_MODE: {DOWNLOAD_MODE}")
-```
-
-This would make the notebook operator-grade and remove manual edits.
-
----
-
-# Practical Default Workflow
-
-Use this sequence in practice:
-
-```text
-1. Run Mode B — Small Smoke Test.
-2. If successful, run Mode C — Full Initial EDGAR Download.
-3. Later, run Mode D periodically to detect new tickers.
-4. Use Mode E only if new tickers appear.
-5. Use Mode F when a new fiscal year should be added.
-```
-
-Bottom line: never run full EDGAR download unless both controls are explicit:
-
-```python
-MAX_TICKERS_FOR_DOWNLOAD = None
-CONFIRM_FULL_EDGAR_DOWNLOAD = True
-```
+This runbook supports operations. The notebook should still contain the direct story for the examiner.

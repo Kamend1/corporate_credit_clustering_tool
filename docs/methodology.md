@@ -1,244 +1,396 @@
 # Methodology
 
-This document describes the end-to-end pipeline of the Corporate Credit Clustering Tool — from raw SEC EDGAR data to a scored, labelled credit quality tier for any non-financial company.
+## Purpose of this document
+
+This document describes the technical and mathematical methodology of the Corporate Credit Clustering Tool. It is project documentation, not a replacement for the explanatory markdown that exists directly inside Notebooks 01–04.
+
+This document attempst a durable project-level reference.
 
 ---
 
-## 1. Problem statement
+## 1. Project framing
 
-Formal credit ratings cover only a small fraction of public companies. Agency ratings are updated infrequently and the underlying methodology is not publicly reproducible. This project derives **data-driven, unsupervised credit quality labels** for 7 000+ US-listed non-financial companies using structured financial data extracted directly from SEC EDGAR filings (10-K, 10-Q).
+The project studies whether unsupervised machine learning can produce an interpretable corporate credit-risk segmentation from public financial-statement data.
 
-The output is not a formal credit rating. It is a transparent, replicable proxy that maps companies into five ordered risk buckets analogous to investment-grade through distressed designations.
+### Real-world problem
+
+Many companies do not have external agency ratings. Even when ratings exist, they may be costly, lagged, sparse, or unsuitable for quick exploratory screening. A finance professional may still need a structured way to compare companies by leverage, liquidity, profitability, cash-flow strength, and debt-service ability.
+
+### Mathematical problem
+
+Each company-year observation is transformed into a six-dimensional bounded risk vector:
+
+```text
+x_i = [structural_distress_risk,
+       earnings_risk,
+       operating_cashflow_risk,
+       liquidity_risk,
+       leverage_risk,
+       debt_service_risk]
+```
+
+The task is to partition these vectors into five groups using KMeans clustering, then rank the clusters from strongest to weakest using financial profiles.
+
+### Machine learning task
+
+This is an unsupervised learning problem. There are no ground-truth labels such as official ratings or observed defaults used for training. The model learns structure from the engineered financial-risk feature space.
+
+The output is a model-relative credit-risk label, not a formal credit rating.
 
 ---
 
-## 2. Data acquisition (Notebook 01)
+## 2. Data acquisition: Notebook 01
 
-Raw financial data is pulled from SEC EDGAR using the `edgartools` library and the EDGAR XBRL API.
+Raw financial data is obtained from SEC EDGAR filings through structured XBRL facts.
 
-**Scope**
-
-| Dimension | Value |
+| Dimension | Project choice |
 |---|---|
-| Source | SEC EDGAR (10-K annual filings) |
-| Fiscal years | 2020 – 2025 |
-| Fiscal period filter | Full-year (`FY`) only |
-| Universe | All US-listed companies with a valid CIK and ticker |
-| Minimum total assets | USD 1 000 000 (training filter) |
-| Excluded segments | Financial / Insurance / Real Estate (SIC-based) |
+| Source | SEC EDGAR |
+| Filing type | Annual financial statement facts, primarily 10-K / FY facts |
+| Fiscal years | 2020–2025 in the current project version |
+| Universe | US-listed companies with valid CIK/ticker data |
+| Training focus | Non-financial companies |
+| Minimum training asset filter | USD 1,000,000 |
 
-**Concept extraction**
+Financial companies are excluded because their balance sheets are fundamentally different. Banks, insurers, and many real estate entities cannot be evaluated with the same leverage, EBITDA, liquidity, and working-capital ratios used for industrial companies.
 
-Each filing is parsed for a fixed set of XBRL concepts defined in `edgar_concepts.py`. Where a company reports under multiple XBRL tags for the same economic item (e.g. `Revenues` vs `RevenueFromContractWithCustomerExcludingAssessedTax`), the concept map selects a deterministic preferred tag and falls back to alternatives in order of priority.
-
-Raw facts are stored as Parquet chunks on Cloudflare R2 and queried locally via DuckDB, avoiding repeated large downloads.
-
-**Incremental refresh**
-
-Notebook 01 is designed for incremental operation. Execution flags (`RUN_*`) guard every EDGAR-calling cell, and a maximum-ticker cap (`MAX_TICKERS_FOR_DOWNLOAD`) enables small test runs without full dataset rebuilds.
+Notebook 01 serves as a data engineering notebook: it builds the raw data foundation, applies safe execution flags, stores large generated outputs outside Git, and prepares a queryable DuckDB/parquet dataset.
 
 ---
 
-## 3. Feature engineering (`src/credit_clustering/features.py`)
+## 3. Concept mapping and accounting normalization
 
-Raw accounting items are transformed into credit-relevant features through a deterministic, multi-step pipeline. The same function — `engineer_private_company_features` — is used for both model training (Notebook 02) and private-company scoring (Notebook 03), ensuring feature consistency.
+SEC filers may use different XBRL tags for economically similar items. The project therefore relies on deterministic concept mapping: preferred concepts are selected first, with fallback concepts used when the preferred tag is missing.
 
-### 3.1 Derived accounting values
+Examples of normalized items:
 
-Before any ratios are computed, several composite items are constructed:
+| Economic item | Possible source concepts |
+|---|---|
+| Revenue | `Revenues`, `SalesRevenueNet`, `RevenueFromContractWithCustomerExcludingAssessedTax` |
+| Assets | `Assets` |
+| Liabilities | `Liabilities` |
+| Equity | `StockholdersEquity`, equivalent equity concepts |
+| Operating cash flow | `NetCashProvidedByUsedInOperatingActivities` |
+| Capex | capital expenditure / payments to acquire property and equipment concepts |
 
+The objective is not perfect accounting reconstruction for every filer. The objective is a robust, repeatable feature panel suitable for a broad clustering model.
+
+---
+
+## 4. Feature engineering
+
+The same feature engineering logic is used for both model training and private-company scoring. This is critical: a company scored in Notebook 03 must be represented in the same feature space as the companies used to train the KMeans artifact in Notebook 02.
+
+### 4.1 Derived accounting values
+
+Before ratios are calculated, the model derives key accounting values:
+
+```text
+total_debt      = long_term_debt + short_term_debt
+net_debt        = total_debt - cash
+free_cash_flow  = operating_cash_flow - abs(capex)
+ebitda          = direct EBITDA, if available,
+                  otherwise operating_income + depreciation_amortization
 ```
-total_debt         = long_term_debt + short_term_debt
-net_debt           = total_debt − cash
-free_cash_flow     = CFO − |capex|
-ebitda             = direct EBITDA (if available)
-                   OR operating_income + depreciation_amortization
-```
 
-If both `long_term_debt` and `short_term_debt` are missing, `total_debt` is set to NaN rather than zero.
+If both long-term and short-term debt are missing, `total_debt` is treated as missing rather than zero. This avoids creating false low-leverage observations.
 
-### 3.2 Base financial ratios
+### 4.2 Base ratios
 
-| Ratio | Numerator | Denominator |
+| Ratio | Formula | Credit interpretation |
 |---|---|---|
-| `liabilities_to_assets` | liabilities | assets |
-| `equity_to_assets` | equity | assets |
-| `debt_to_assets` | total_debt | assets |
-| `debt_to_equity` | total_debt | equity |
-| `cash_to_assets` | cash | assets |
-| `net_income_to_assets` | net_income | assets |
-| `cfo_to_assets` | CFO | assets |
-| `revenue_to_assets` | revenue | assets |
-| `current_ratio` | assets_current | liabilities_current |
-| `quick_ratio` | cash + receivables | liabilities_current |
-| `log_assets` | log1p(assets) | — |
+| `liabilities_to_assets` | liabilities / assets | Balance-sheet leverage |
+| `debt_to_assets` | total debt / assets | Interest-bearing debt load |
+| `equity_to_assets` | equity / assets | Equity cushion |
+| `cash_to_assets` | cash / assets | Immediate liquidity buffer |
+| `net_income_to_assets` | net income / assets | Profitability relative to asset base |
+| `cfo_to_assets` | CFO / assets | Operating cash generation |
+| `current_ratio` | current assets / current liabilities | Short-term liquidity |
+| `quick_ratio` | cash + receivables / current liabilities | Liquid-asset coverage |
+| `interest_coverage` | operating income / interest expense | Ability to cover interest from EBIT |
+| `fcf_to_debt` | free cash flow / total debt | Cash repayment capacity |
+| `debt_to_ebitda` | total debt / EBITDA | Leverage relative to operating earnings |
+| `net_debt_to_ebitda` | net debt / EBITDA | Net leverage |
+| `ebitda_interest_coverage` | EBITDA / interest expense | EBITDA-based interest cushion |
 
-Denominators are protected by `safe_divide()`, which returns NaN whenever the denominator is zero, negative (for cases where sign matters), or below the configurable `SME_MIN_DENOMINATOR` threshold (default: 1 000). This threshold is intentionally small so that private-company scoring is not blocked on valid but modest interest-expense figures.
-
-### 3.3 EBITDA diagnostics
-
-| Metric | Formula |
-|---|---|
-| `ebitda_margin` | EBITDA / revenue |
-| `debt_to_ebitda` | total_debt / EBITDA |
-| `net_debt_to_ebitda` | net_debt / EBITDA |
-| `ebitda_interest_coverage` | EBITDA / \|interest_expense\| |
-
-Where EBITDA ≤ 0, the leverage ratios `debt_to_ebitda` and `net_debt_to_ebitda` are set to NaN rather than producing a misleading negative value. All EBITDA columns are nulled for financial companies (SIC-flagged), where EBITDA is not a meaningful concept.
-
-### 3.4 Bounded risk factors (component level)
-
-Each base ratio is transformed into a directional risk score on [0, 1] using a piecewise linear mapping:
-
-**`linear_risk_bad_high(x, low, high)`** — used where higher values indicate more risk (leverage, debt load):
-
-$$r = \text{clip}\!\left(\frac{x - \text{low}}{\text{high} - \text{low}},\; 0,\; 1\right)$$
-
-**`linear_risk_bad_low(x, good, bad)`** — used where lower values indicate more risk (coverage, liquidity):
-
-$$r = \text{clip}\!\left(\frac{\text{good} - x}{\text{good} - \text{bad}},\; 0,\; 1\right)$$
-
-A score of **0 means no risk detected** for that dimension; **1 means maximum risk** within the calibrated range. Values outside the calibrated range are clipped to [0, 1]; they do not extrapolate. Thresholds are defined in `config.py` and documented in the [User Guide](user_guide_config.md).
-
-### 3.5 Domain risk features (model inputs)
-
-Fourteen component risks are aggregated into six domain-level features. These are the **direct inputs to the KMeans clustering model**.
-
-| Domain feature | Sub-components and weights |
-|---|---|
-| `leverage_risk` | 0.40 × liabilities_risk + 0.35 × debt_load_risk + 0.25 × equity_buffer_risk |
-| `liquidity_risk` | 0.45 × current_liquidity_risk + 0.40 × quick_liquidity_risk + 0.15 × cash_buffer_risk |
-| `earnings_risk` | profitability_risk (1:1) |
-| `operating_cashflow_risk` | cashflow_risk (1:1) |
-| `debt_service_risk` | 0.35 × coverage_risk + 0.25 × fcf_risk + 0.25 × debt_to_ebitda_risk + 0.15 × ebitda_coverage_risk (falls back to 0.60 × coverage_risk + 0.40 × fcf_risk when EBITDA is unavailable) |
-| `structural_distress_risk` | max(negative_equity_flag, liabilities_exceed_assets_flag) |
-
-Because all domain features are already bounded [0, 1] and directionally comparable, **no StandardScaler is applied before clustering**. Scaling would compress the variation within this intentionally bounded space and obscure the credit-relevant differences the features encode.
-
-### 3.6 Scorecard credit score
-
-A weighted sum of the six domain features produces a composite `scorecard_credit_score` on [0, 100], where 0 is lowest risk and 100 is highest. Weights are applied proportionally to available features so that a company with one or more missing domains is not penalised beyond the data gap itself.
-
-Domain weights: leverage 25%, liquidity 20%, operating CF 20%, earnings 15%, debt service 15%, structural distress 5%.
-
-The scorecard score is used exclusively for **post-hoc cluster ranking and interpretation**; it is not a KMeans input.
+All ratio divisions are protected by denominator rules. Very small denominators are converted to missing values rather than producing meaningless extreme ratios.
 
 ---
 
-## 4. Preprocessing
+## 5. Bounded credit-risk transformation
 
-Before clustering:
+Raw ratios have different units and scales. KMeans is distance-based, so directly clustering raw ratios would be unstable and hard to interpret. The project therefore maps raw ratios into bounded component risk scores on `[0, 1]`.
 
-1. **Winsorisation** — optional; controlled by `winsor_caps` parameter in `engineer_private_company_features`. In the v3 training run, this is `None` (no winsorisation). Winsorisation caps are supported for private-company scoring where user-supplied inputs may lie far outside the training distribution.
+For ratios where higher values are worse:
 
-2. **Missing-value imputation** — median imputation via scikit-learn `SimpleImputer` is applied inside the KMeans pipeline. Imputation uses the median of each feature across the training segment, not a global median.
+```text
+risk = clip((x - low) / (high - low), 0, 1)
+```
 
-3. **Row-level coverage filter** — rows with fewer than `max(DEFAULT_MIN_FEATURES, ceil(n_features × DEFAULT_ROW_FEATURE_COVERAGE))` non-null model features are excluded from clustering. With six features and the default 60% coverage threshold, a row needs at least four non-null features to be clustered.
+For ratios where lower values are worse:
 
-4. **Feature availability filter** — a feature is dropped if it is entirely unavailable across the segment (column is all-NaN). By default (`DEFAULT_MIN_FEATURE_COVERAGE = 0.0`) partial availability is accepted, and the imputer handles the gaps.
+```text
+risk = clip((good - x) / (good - bad), 0, 1)
+```
+
+Interpretation:
+
+```text
+0 = low risk for that component
+1 = high risk for that component
+```
+
+This makes the feature space mathematically suitable for Euclidean distance and financially interpretable.
 
 ---
 
-## 5. Clustering model (`src/credit_clustering/clustering.py`)
+## 6. Domain-level model features
 
-### 5.1 Algorithm
+Component risks are aggregated into six domain features.
 
-The primary model is **KMeans** with k-means++ initialisation. The objective function minimises within-cluster inertia:
+| Domain feature | Construction logic |
+|---|---|
+| `leverage_risk` | liabilities risk, debt load risk, equity buffer risk |
+| `liquidity_risk` | current liquidity, quick liquidity, cash buffer |
+| `earnings_risk` | profitability risk |
+| `operating_cashflow_risk` | operating cash-flow risk |
+| `debt_service_risk` | interest coverage, FCF/debt, EBITDA leverage and EBITDA coverage |
+| `structural_distress_risk` | negative equity / liabilities exceed assets |
 
-$$\underset{C_1,\ldots,C_k}{\arg\min} \sum_{j=1}^{k} \sum_{\mathbf{x} \in C_j} \left\|\mathbf{x} - \boldsymbol{\mu}_j\right\|^2$$
+Because these features are already bounded and directionally aligned, the v3 scorecard model does not apply StandardScaler before KMeans. Scaling would weaken the intended financial meaning of the bounded risk space.
 
-where $\boldsymbol{\mu}_j$ is the centroid of cluster $C_j$ and $\|\cdot\|$ is the Euclidean norm in the six-dimensional risk-feature space.
+---
 
-**Configuration**
+## 7. Why Altman Z-score is not a primary model feature
+
+Altman Z-score is a useful distress diagnostic, but it is not used as a primary KMeans feature in this project.
+
+Reason: Altman Z-score is itself a composite distress model. Including it directly would partially pre-label the unsupervised feature space and duplicate several underlying dimensions already captured by the scorecard features.
+
+Better use:
+
+```text
+Altman-style distress score = external benchmark / appendix diagnostic / sensitivity check
+```
+
+not:
+
+```text
+Altman-style distress score = core KMeans feature
+```
+
+This preserves the integrity of the unsupervised design.
+
+---
+
+## 8. KMeans clustering model
+
+KMeans partitions observations into `k` clusters by minimizing within-cluster squared Euclidean distance:
+
+```text
+minimize Σ_j Σ_{x_i in C_j} ||x_i - μ_j||²
+```
+
+where:
+
+| Symbol | Meaning |
+|---|---|
+| `x_i` | six-dimensional risk vector for company-year observation `i` |
+| `C_j` | cluster `j` |
+| `μ_j` | centroid of cluster `j` |
+| `k` | number of clusters, currently 5 |
+
+### Current configuration
 
 | Parameter | Value | Rationale |
-|---|---|---|
-| `k` | 5 | Five tiers broadly mirroring IG-high / IG-core / crossover / speculative / distressed |
-| `init` | k-means++ | Reduces sensitivity to random centroid initialisation |
-| `n_init` | 500 | Runs 500 independent initialisations; the one with lowest inertia is kept |
+|---|---:|---|
+| `k` | 5 | Practical five-tier risk scale |
+| initialization | k-means++ | Improves initial centroid placement |
+| `n_init` | 500 | Improves stability against local optima |
 | `random_state` | 42 | Reproducibility |
+| segment | Non-financial only | Keeps accounting interpretation consistent |
 
-### 5.2 Segment isolation
+### Why KMeans is appropriate
 
-The model is trained exclusively on non-financial companies (segment = "Non-financial", controlled by `financial_flag` column derived from SIC codes). Financial companies are excluded because leverage and EBITDA metrics are structurally different for banks and insurers, and the risk thresholds calibrated for industrial companies are not appropriate for them.
+KMeans is appropriate because the engineered feature space is:
 
-### 5.3 Alternative algorithms (Notebook 04)
+- numeric;
+- low-dimensional;
+- bounded;
+- directionally consistent;
+- explainable;
+- suitable for centroid-based interpretation.
 
-Agglomerative hierarchical clustering and DBSCAN are benchmarked against the KMeans result on a reproducible sample. These comparisons test whether the five risk groups behave like a genuine hierarchical ladder and whether density-based methods identify the same distressed outlier region. Both methods are computationally heavier than KMeans and are run on a downsampled frame to keep the notebook practical.
+The goal is not to predict default. The goal is to group companies with similar financial-risk profiles.
 
-### 5.4 k selection
+### KMeans limitation
 
-The selected k = 5 is evaluated against k ∈ {2, …, 8} using three internal metrics:
+KMeans assumes that Euclidean distance and centroid proximity are meaningful. It also tends to favor compact, roughly spherical clusters. Credit risk may not naturally form perfect spherical groups, so the project compares KMeans with hierarchical clustering and DBSCAN in Notebook 04.
 
-| Metric | Preferred direction | What it measures |
+---
+
+## 9. k selection and internal metrics
+
+The model evaluates different values of `k`, usually from 2 to 8, using internal clustering metrics.
+
+| Metric | Preferred direction | Interpretation |
 |---|---|---|
-| Silhouette coefficient | Higher is better | Separation relative to cohesion |
-| Calinski-Harabász index | Higher is better | Ratio of between-cluster to within-cluster dispersion |
-| Davies-Bouldin index | Lower is better | Average ratio of within-cluster scatter to between-cluster distance |
+| Inertia | Lower | Within-cluster squared distance; always decreases as k increases. |
+| Silhouette coefficient | Higher | How well observations fit their own cluster vs neighboring clusters. |
+| Calinski-Harabasz index | Higher | Ratio of between-cluster to within-cluster dispersion. |
+| Davies-Bouldin index | Lower | Average similarity between each cluster and its nearest alternative. |
 
-The k-range sweep is in Notebook 02 (Section 6) and saved to `cluster_k_tests_v3_by_financial_flag.csv`.
+The selected `k = 5` is not chosen mechanically from one metric. It reflects a balance between mathematical separation and interpretable credit-risk tiers.
 
 ---
 
-## 6. Cluster profiling and labelling (`src/credit_clustering/profiling.py`)
+## 10. Cluster ranking and labels
 
-After clustering, each cluster is characterised by:
+Raw KMeans cluster IDs are arbitrary. Cluster `0` is not necessarily low risk, and cluster `4` is not necessarily high risk.
 
-- Median values of all INTERPRET_FEATURES (ratios, risk scores, size flags)
-- Count of issuer-year observations and unique issuers
-- Industry / sector composition
-- Representative tickers (companies closest to the centroid in feature space, selected by Euclidean distance to the cluster median)
+The project ranks clusters post-hoc by their median `scorecard_credit_score`. The cluster with the lowest median score becomes risk rank 1; the highest becomes risk rank 5.
 
-Clusters are ranked within each segment from lowest to highest `median_scorecard_credit_score`. The five resulting ranks receive the following default labels:
+Recommended labels:
 
-| Rank | Label |
+| Risk rank | Label |
+|---:|---|
+| 1 | Strong relative credit profile |
+| 2 | Good credit profile |
+| 3 | Leveraged / elevated risk profile |
+| 4 | Weak credit profile |
+| 5 | Distressed / near-default proxy |
+
+These labels are not formal ratings. They are model-relative interpretations.
+
+---
+
+## 11. Scorecard credit score
+
+The scorecard credit score is a weighted index of the six domain risk features:
+
+```text
+score = 100 × Σ(w_d × r_d) / Σ(w_d for available domains)
+```
+
+where:
+
+| Symbol | Meaning |
 |---|---|
-| 1 | 1 — Low risk / investment-grade-like |
-| 2 | 2 — Moderate risk / lower-investment-grade-like |
-| 3 | 3 — Elevated risk / leveraged |
-| 4 | 4 — High risk / speculative |
-| 5 | 5 — Distressed / near-default proxy |
+| `r_d` | domain risk feature |
+| `w_d` | domain weight |
 
-These labels are interpretive aids. They are not formal credit ratings and have not been calibrated against agency rating transitions.
+The score is not the KMeans input. It is used to:
+
+1. rank clusters;
+2. explain a company’s continuous risk position;
+3. support report interpretation.
 
 ---
 
-## 7. Artifact persistence (`src/credit_clustering/artifacts.py`)
+## 12. Soft cluster affinity
 
-The fitted model and its associated metadata are serialised to a single `.joblib` file:
+After scoring a company, distances to all centroids are converted to soft affinities:
 
+```text
+a_j = exp(-d_j / T) / Σ_i exp(-d_i / T)
 ```
-saved_models/nonfinancial_credit_scorecard_kmeans_k5_v3.joblib
+
+where:
+
+| Symbol | Meaning |
+|---|---|
+| `d_j` | distance to cluster centroid `j` |
+| `T` | temperature parameter |
+| `a_j` | soft affinity to cluster `j` |
+
+Affinity is a similarity measure. It is not probability of default and not statistical confidence in a rating.
+
+---
+
+## 13. Alternative methods: Notebook 04
+
+Notebook 04 compares KMeans with other unsupervised approaches.
+
+| Method | Why tested | Why not primary |
+|---|---|---|
+| Agglomerative clustering | Tests whether risk groups form a hierarchy | Harder to operationalize for new scoring; heavier computationally |
+| DBSCAN | Detects dense regions and outliers | Sensitive to `eps`; may produce noise labels instead of business tiers |
+| PCA visualization | Helps visualize six-dimensional structure in 2D/3D | Visualization only, not the model itself |
+| KMeans | Interpretable centroids and easy scoring of new companies | Assumes Euclidean centroid structure |
+
+PCA or Plotly visualizations should be described as communication tools, not as the core credit model.
+
+---
+
+## 14. Validation strategy for an unsupervised credit model
+
+Because there are no labelled target ratings or default outcomes, validation is not based on accuracy.
+
+The project uses or should use the following validation logic:
+
+1. Internal clustering metrics: inertia, silhouette, Calinski-Harabasz, Davies-Bouldin.
+2. Financial monotonicity: weaker clusters should show weaker leverage, liquidity, profitability, cash flow, and coverage.
+3. Representative-company review: companies close to centroids should make business sense.
+4. Alternative algorithm comparison: KMeans structure should be broadly compatible with hierarchical and density-based checks.
+5. Sensitivity analysis: labels should remain reasonably stable under controlled perturbations.
+6. Guardrail diagnostics: raw financial red flags should qualify model interpretation.
+
+This is the correct validation posture for a domain-guided unsupervised financial model.
+
+---
+
+## 15. Private-company scoring
+
+Notebook 03 applies the trained public-company benchmark model to manually entered or private-company financials.
+
+The scoring sequence is:
+
+```text
+raw financial inputs
+→ FX normalization and validation
+→ derived accounting values
+→ ratios and component risks
+→ six domain-level features
+→ KMeans cluster assignment
+→ distance and affinity diagnostics
+→ adjacent-bucket outlook
+→ guardrails
+→ Excel and PDF reporting
 ```
 
-The artifact dictionary contains:
-
-- `pipeline` — fitted sklearn Pipeline (imputer + KMeans)
-- `feature_cols` — ordered list of model input features
-- `cluster_labels` — `{cluster_id: label}` mapping
-- `risk_rank` — `{cluster_id: rank}` mapping
-- `cluster_profile_ranked` — full cluster summary table
-- `scorecard_domain_weights` — weights used for the composite score
-- `winsor_caps` — training-time caps (None for v3)
-- `artifact_version`, `notes`, training metadata
-
-The artifact is the only file Notebook 03 and the scoring utility require at inference time.
+Private-company scoring is useful, but it is also partly out-of-distribution. The model is trained on SEC public-company data, so the report should disclose data-source limitations and avoid rating-equivalent claims.
 
 ---
 
-## 8. Scoring private companies (Notebook 03, `src/credit_clustering/scoring.py`)
+## 16. Limitations summary
 
-Any company — public, private, simulated — can be scored against the trained model by supplying raw financial inputs. The `score_companies()` function:
+Key limitations:
 
-1. Engineers features using the same `engineer_private_company_features` function used in training.
-2. Predicts the assigned KMeans cluster via `pipeline.predict()`.
-3. Computes Euclidean distances to all cluster centroids via `pipeline.transform()`.
-4. Converts distances to **soft cluster affinities** using an exponential kernel: $a_j = \exp(-d_j / T) / \sum_i \exp(-d_i / T)$, where $T$ is the temperature parameter (default 1.0).
-5. Computes `near_default_affinity` — the soft affinity for the most distressed cluster.
-6. Adds `warning_flags` for structural anomalies (negative equity, assets below model threshold, coverage below 1×, etc.).
+- not a formal credit rating;
+- no external default/rating validation in the current version;
+- SEC public-company universe may not represent SMEs or non-US companies;
+- survivorship bias under-represents companies that disappeared before the data pull;
+- median imputation may centralize low-data observations;
+- financial companies are excluded;
+- qualitative factors, covenants, collateral, ownership support, and sector position are outside the model.
 
-Notebook 03 also runs **adjacent-bucket diagnostics** via `diagnostics.py`, which computes distances to the next-higher and next-lower risk buckets and assigns an outlook flag (Positive / Neutral / Negative) based on the relative distance ratios.
+See `limitations.md` for the full discussion.
 
 ---
 
-*See also: [Model Interpretation](model_interpretation.md) | [Limitations](limitations.md) | [Sensitivity Analysis](sensitivity_analysis.md)*
+## 17. Final project communication note
+
+In the SoftUni notebooks, the methodology should be explained directly in markdown cells, not only linked through this document.
+
+Notebook communication should explicitly show:
+
+- problem formulation;
+- mathematical translation;
+- data pipeline;
+- feature engineering logic;
+- KMeans objective;
+- model evaluation;
+- limitations;
+- conclusion.
+
+The `.md` files support the project, but the notebooks remain the primary communication layer.

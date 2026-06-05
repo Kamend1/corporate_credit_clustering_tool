@@ -1,176 +1,392 @@
 # Scorer Report Methodology
 
-This document explains the mechanics behind the private-company scoring workflow in Notebook 03, including how raw financial inputs are converted into a scored report, what each section of that report means, and how the scenario analysis and outlook diagnostics are constructed.
+## Purpose of this document
+
+This document explains how Notebook 03 and the reporting utilities convert a company’s financial statements into a scored output, scenario analysis, Excel workbook, and PDF credit-risk diagnostic report.
+
+It is project documentation for future development. The final SoftUni notebooks should still contain direct explanatory markdown for the examiner.
 
 ---
 
 ## 1. Overview
 
-Notebook 03 (`03_private_company_credit_scoring_tool_feature_patch.ipynb`) applies the trained KMeans model — serialised as a `.joblib` artifact — to score any company whose financials can be expressed in the input schema. Typical use cases are:
+Notebook 03 applies the trained KMeans artifact from Notebook 02 to manually entered or private-company financials.
 
-- Scoring a private company against the public-company benchmark model.
-- Re-scoring a previously rated public company on updated financials.
-- Running stress scenarios on a base set of financials to observe cluster migration.
-- Generating a structured credit quality report for audit or advisory purposes.
+Main use cases:
 
-The entire scoring chain is implemented in `src/credit_clustering/scoring.py` and `src/credit_clustering/diagnostics.py`.
+- score a private company against the public-company benchmark;
+- rescore a public company using updated financials;
+- run scenario analysis;
+- produce Excel and PDF outputs;
+- demonstrate an end-to-end ML application beyond training.
 
----
+The scoring pipeline is implemented mainly through:
 
-## 2. Input schema
-
-The minimum required input is a dictionary (or DataFrame row) containing the company's raw financial statement items. All monetary values must be in the same currency and consistent unit (e.g. all in thousands of USD). Use `DEFAULT_FX_TO_MODEL_CURRENCY` to convert non-USD inputs.
-
-| Field | Required | Notes |
-|---|---|---|
-| `assets` | Yes | Total assets |
-| `liabilities` | Yes | Total liabilities |
-| `equity` | Yes | Total equity (can be negative) |
-| `revenue` | Yes | Total revenue / net sales |
-| `net_income` | Yes | Net income / profit after tax |
-| `cfo` | Yes | Cash from operations (operating cash flow) |
-| `cash` | Recommended | Cash and cash equivalents |
-| `long_term_debt` | Recommended | Long-term debt and finance leases |
-| `short_term_debt` | Recommended | Short-term borrowings and current portion of LT debt |
-| `assets_current` | Recommended | Current assets |
-| `liabilities_current` | Recommended | Current liabilities |
-| `receivables` | Optional | Trade receivables (for quick ratio) |
-| `operating_income` | Optional | EBIT; used for EBITDA calculation when direct EBITDA is absent |
-| `depreciation_amortization` | Optional | D&A; used for EBITDA calculation |
-| `ebitda` | Optional | Direct EBITDA; overrides the calculated value if provided |
-| `interest_expense` | Optional | Interest paid; required for coverage ratios |
-| `gross_profit` | Optional | Gross profit; used for gross margin |
-| `capex` | Optional | Capital expenditure; used for free cash flow |
-| `inventory` | Optional | Inventory; used in future asset-quality extensions |
-| `fiscal_year` | Optional | Label for reporting |
-| `company_name` | Optional | Label for reporting |
-
-Fields that are absent are treated as NaN and handled by the imputation layer. The `feature_coverage_pct` output reflects how many of the six model features could be computed from the supplied data.
-
----
-
-## 3. Feature engineering (scoring path)
-
-The function `engineer_private_company_features()` in `features.py` is called identically for training data (Notebook 02) and private-company inputs (Notebook 03). This ensures that a company scored today is evaluated in the same feature space as the companies the model was trained on.
-
-The scoring path applies the following additional options not present in the training path:
-
-**`winsor_caps`**: if provided from the artifact, ratio values are clipped to the training-time winsorisation bounds before the risk transformation. This prevents extreme private-company inputs from extrapolating into undefined regions of the feature space. In the v3 artifact, `winsor_caps = None` (no winsorisation was applied during training), so this step is a pass-through.
-
-**`fx_to_model_currency`**: multiplies all monetary columns by the supplied FX rate before computing ratios. Default is 1.0 (inputs already in USD).
-
-**`min_denominator`**: set to `SME_MIN_DENOMINATOR = 1 000` for private-company scoring, lower than the public-company training default, to avoid suppressing valid but small interest-expense values.
-
----
-
-## 4. Cluster assignment
-
-Once features are engineered, the artifact's sklearn Pipeline is invoked in two steps:
-
-```
-1. pipe.predict(X_new)        → assigned_cluster (integer, 0–4)
-2. pipe.transform(X_new)      → distance matrix [n_companies × 5]
-```
-
-The Pipeline contains a `SimpleImputer` (median, fit on the training segment) followed by the fitted KMeans model. Both steps are applied in sequence automatically by the Pipeline.
-
-`predict()` returns the cluster with the smallest Euclidean distance to each company's feature vector. `transform()` returns the distances to all five centroids, which are then used to compute soft affinities and outlook diagnostics.
-
----
-
-## 5. Soft affinity computation
-
-The distance matrix is converted to a probability-like affinity vector using an exponential kernel:
-
-$$a_j = \frac{e^{-d_j / T}}{\sum_{i=1}^{5} e^{-d_i / T}}$$
-
-where $d_j$ is the distance to centroid $j$ and $T$ is the temperature parameter (default 1.0).
-
-**Effect of temperature on affinity distribution:**
-
-| T | Interpretation |
+| Component | Role |
 |---|---|
-| 0.3 | Very sharp: nearly all affinity concentrated on assigned cluster |
-| 1.0 | Moderate: adjacent clusters receive meaningful affinity if close |
-| 3.0 | Flat: affinities are approximately equal across all clusters |
-
-The default T = 1.0 is appropriate for most use cases. Lower T is useful when you want a binary-style assignment signal; higher T is useful for visualising how borderline a company's placement is.
+| `features.py` | Builds ratios, component risks, and domain features. |
+| `scoring.py` | Applies the saved model artifact and computes affinities. |
+| `diagnostics.py` | Adds adjacent-bucket distances and outlook. |
+| `guardrails.py` | Adds post-model analyst caution logic. |
+| `credit_report_util.py` | Creates Excel / tabular reporting outputs. |
+| `credit_pdf_report_util.py` | Creates the professional PDF report. |
 
 ---
 
-## 6. Adjacent-bucket outlook diagnostics
+## 2. End-to-end scoring flow
 
-The `add_adjacent_bucket_distances_and_outlook()` function in `diagnostics.py` extends the scored output with a directional outlook flag by comparing the company's distances to adjacent cluster centroids.
-
-**Step-by-step:**
-
-1. Look up the assigned cluster's `risk_rank` (1–5).
-2. Identify the cluster with `risk_rank − 1` (upper/better bucket) and `risk_rank + 1` (lower/worse bucket) from the artifact's `risk_rank` mapping.
-3. Retrieve the distances to those clusters from the full distance matrix.
-4. Compare those distances to the assigned-cluster distance using two multipliers:
-   - `neutral_band = 0.15`: a 15% buffer within which differences are ignored.
-   - `upgrade_boundary_multiplier = 1.35`: an adjacent cluster must be reachable within 1.35× the assigned-cluster distance to trigger a directional signal.
-5. Apply the flag logic:
-
+```text
+Raw financial inputs
+        ↓
+Input schema alignment and missing-value handling
+        ↓
+FX normalization, if required
+        ↓
+Derived accounting values
+        ↓
+Base financial ratios
+        ↓
+Component risk scores
+        ↓
+Six domain-level model features
+        ↓
+KMeans cluster assignment
+        ↓
+Distance and affinity diagnostics
+        ↓
+Adjacent-bucket outlook
+        ↓
+Warning flags and guardrails
+        ↓
+Excel workbook and PDF report
 ```
-diff = lower_distance − upper_distance
-threshold = assigned_distance × 0.15
 
-Positive:  diff > threshold AND upper_distance ≤ assigned_distance × 1.35
-Negative:  diff < −threshold AND lower_distance ≤ assigned_distance × 1.35
-Neutral:   otherwise
+This flow is important academically because it shows that the project is not only fitting a model. It also operationalizes the model into a repeatable scoring/reporting workflow.
+
+---
+
+## 3. Input schema
+
+The scoring input can be a dictionary or a DataFrame row. All monetary values should use the same unit and currency before scoring.
+
+### Minimum usable input
+
+The minimum input for a basic score is:
+
+| Field | Meaning |
+|---|---|
+| `assets` | Total assets |
+| `liabilities` | Total liabilities |
+| `equity` | Total equity |
+| `revenue` | Revenue / sales |
+| `net_income` | Profit after tax |
+| `cfo` | Operating cash flow |
+
+This minimum can produce some core profitability, cash-flow, leverage, and structural risk features.
+
+### Recommended complete input
+
+For a more reliable credit score, include:
+
+| Field | Why it matters |
+|---|---|
+| `cash` | Cash buffer and net debt calculation |
+| `current_assets` / `assets_current` | Current ratio |
+| `current_liabilities` / `liabilities_current` | Current and quick ratio |
+| `receivables` | Quick ratio |
+| `inventory` | Future working-capital diagnostics |
+| `long_term_debt` | Debt load |
+| `short_term_debt` | Debt load |
+| `interest_expense` | Interest coverage |
+| `operating_income` | EBIT and EBITDA reconstruction |
+| `depreciation_amortization` | EBITDA reconstruction |
+| `ebitda` | Direct EBITDA, if available |
+| `capex` | Free cash flow |
+| `gross_profit` | Gross margin diagnostics |
+
+### Missing data consequences
+
+| Missing item | Main consequence |
+|---|---|
+| Debt fields | Leverage and debt-service ratios weaken or become unavailable. |
+| Interest expense | Coverage ratios unavailable. |
+| Current assets/liabilities | Liquidity risk weakens. |
+| EBITDA / D&A / operating income | EBITDA leverage and coverage unavailable. |
+| Capex | FCF/debt unavailable. |
+| Cash | Cash buffer and net debt less reliable. |
+
+The output column `feature_coverage_pct` should be reviewed whenever inputs are incomplete.
+
+---
+
+## 4. Currency and units
+
+All input values must be internally consistent.
+
+Examples of acceptable input bases:
+
+```text
+all values in USD
+all values in thousand USD
+all values in BGN, then converted using fx_to_model_currency
 ```
 
-**What the outlook flag means:**
-The flag is a **static cluster-position signal** — it describes where the company sits relative to its neighbours in the current-year feature space. A Negative outlook does not predict that the company will migrate to a worse cluster next year. It means that, given the current financials, the company's risk profile is more similar to the next-worse cluster than to the next-better cluster.
+Ratios are mostly scale-neutral, but the following are not:
+
+- `log_assets`;
+- asset-size bands;
+- assets-below-threshold warnings;
+- any report text discussing absolute size.
+
+Therefore, if the model currency is USD and the input company reports in BGN, apply the FX multiplier consistently.
 
 ---
 
-## 7. Scenario analysis
+## 5. Feature engineering during scoring
 
-`make_scenarios()` in `scoring.py` constructs four pre-defined stress cases from a base set of raw financials:
+Notebook 03 calls the same `engineer_private_company_features()` logic used in training.
 
-| Scenario | Changes applied to base inputs |
+This ensures consistency between:
+
+```text
+training feature space
+```
+
+and:
+
+```text
+private-company scoring feature space
+```
+
+The scoring path may also apply:
+
+| Option | Meaning |
 |---|---|
-| `base` | No change — the company as reported |
-| `revenue_down_15pct` | Revenue −15%; net income −30%; CFO −25%; operating income −30% |
-| `debt_up_25pct` | Long-term debt +25%; liabilities increase accordingly; cash slightly reduced |
-| `cash_burn_case` | Cash halved; CFO set to negative; net income set to negative |
-| `near_default_stress` | Liabilities = 110% of assets (insolvent balance sheet); LT debt = 75% of assets; ST debt = 15% of assets; operating income = 40% of interest expense |
+| `winsor_caps` | Optional training-time caps if stored in the artifact. |
+| `fx_to_model_currency` | Currency conversion multiplier. |
+| `min_denominator` | SME-compatible ratio denominator threshold. |
 
-Each scenario row is scored identically to the base case. The scenario output table shows the cluster label, risk rank, affinity, near-default affinity, outlook flag, and scorecard score for all five scenarios side by side.
-
-**Reading scenario results:**
-- If the base case is in tier 3 and the `debt_up_25pct` scenario shifts to tier 4, leverage is the binding constraint for this company's credit quality.
-- If the `near_default_stress` scenario remains in tier 4 (not tier 5), it means the company's feature profile in the stress case is still closer to the speculative centroid than to the distressed centroid — a structural resilience signal.
-- The `near_default_affinity` is the most sensitive indicator of proximity to the distressed cluster across scenarios.
+In the current v3 scorecard model, winsorization is not the central modeling step. The model relies mainly on bounded risk transformations.
 
 ---
 
-## 8. Company vs cluster median comparison
+## 6. Cluster assignment
 
-`compare_to_cluster_profile()` in `diagnostics.py` produces a row-level comparison of a single scored company against the median profile of its assigned cluster:
+The saved artifact contains a scikit-learn pipeline, typically:
 
-| Column | Description |
+```text
+SimpleImputer → KMeans
+```
+
+Scoring uses:
+
+```python
+pipeline.predict(X_new)
+```
+
+to assign the nearest cluster, and:
+
+```python
+pipeline.transform(X_new)
+```
+
+to compute distances to all cluster centroids.
+
+The assigned cluster is the centroid with the lowest Euclidean distance in the six-dimensional risk-feature space.
+
+Important:
+
+```text
+The raw assigned cluster ID is not the business label.
+The business label comes from the artifact's risk-rank mapping.
+```
+
+---
+
+## 7. Soft affinity
+
+Distances are converted into soft affinities:
+
+```text
+a_j = exp(-d_j / T) / Σ_i exp(-d_i / T)
+```
+
+where `T` is the temperature parameter.
+
+| Temperature | Effect |
+|---:|---|
+| 0.3 | Very sharp; mostly assigned cluster. |
+| 1.0 | Balanced default. |
+| 3.0 | Flatter; more affinity spread across clusters. |
+
+Affinity is a similarity measure. It is not probability of default and should not be presented as such.
+
+---
+
+## 8. Adjacent-bucket outlook
+
+The adjacent-bucket diagnostic compares the company to the next stronger and next weaker risk buckets.
+
+Simplified logic:
+
+```text
+if closer to stronger adjacent bucket by enough margin:
+    Positive
+elif closer to weaker adjacent bucket by enough margin:
+    Negative
+else:
+    Neutral
+```
+
+The current logic uses a neutral band and boundary multipliers to avoid overreacting to small distance differences.
+
+Interpretation:
+
+| Outlook | Meaning |
 |---|---|
-| `metric` | Financial ratio or risk feature name |
-| `company_value` | The scored company's value for this metric |
-| `assigned_cluster_median` | Median value for this metric across all companies in the assigned cluster |
-| `difference` | `company_value − assigned_cluster_median` |
-| `relative_position` | `above_cluster_median`, `below_cluster_median`, or `equal_to_cluster_median` |
+| Positive | Current profile leans toward a stronger bucket. |
+| Neutral | Current profile is reasonably centered in assigned bucket. |
+| Negative | Current profile leans toward a weaker bucket. |
 
-This table is useful for identifying which specific dimensions drive the company's position within its cluster, and whether the company is a well-centred representative or an outlier at the boundary.
+The outlook is not a forecast. It is a static cluster-position diagnostic.
 
 ---
 
-## 9. Warning flags in the context of a report
+## 9. Scenario analysis
 
-Warning flags generated by `make_warning_flags()` are diagnostic signals, not disqualifiers. In a formal credit report they serve three functions:
+Notebook 03 includes mechanical scenarios that modify base financial inputs and rescore the company.
 
-1. **Data quality check**: `invalid_assets` or `assets_below_model_threshold` flag potential input errors or companies outside the model's training scope.
-2. **Structural stress indicators**: `liabilities_exceed_assets`, `negative_equity`, `interest_coverage_below_1` flag conditions that are independently meaningful regardless of cluster assignment.
-3. **Consistency check**: if a company is assigned to tier 1 (Low risk) but carries `interest_coverage_below_1` and `debt_to_ebitda_above_6`, this is a signal that the cluster assignment may reflect an unusually well-performing peer group rather than genuinely low-risk financials — warranting closer inspection of the `cluster_affinity` and `feature_coverage_pct`.
+Typical scenarios:
+
+| Scenario | Description |
+|---|---|
+| `base` | Reported or manually entered financials. |
+| `revenue_down_15pct` | Revenue, profit, operating income, and CFO stress. |
+| `debt_up_25pct` | Debt and liabilities increase. |
+| `cash_burn_case` | Cash falls and profitability/cash flow weaken. |
+| `near_default_stress` | Balance sheet and coverage pushed toward distress. |
+
+Scenarios are sensitivities, not forecasts.
+
+Correct wording:
+
+```text
+Under this mechanical stress scenario, the company migrates to a weaker model-relative risk bucket.
+```
+
+Avoid:
+
+```text
+The company is expected to be downgraded.
+```
 
 ---
 
-*See also: [Model Interpretation](model_interpretation.md) | [User Guide: Configuration](user_guide_config.md) | [Methodology](methodology.md)*
+## 10. Company vs cluster median comparison
+
+The report compares the scored company to the median profile of its assigned cluster.
+
+| Output field | Meaning |
+|---|---|
+| `metric` | Ratio or risk feature. |
+| `company_value` | Company-specific value. |
+| `assigned_cluster_median` | Median value in the assigned cluster. |
+| `difference` | Company value minus cluster median. |
+| `relative_position` | Above, below, or equal to cluster median. |
+
+This comparison explains why a company is typical or atypical for its bucket.
+
+---
+
+## 11. Guardrail layer
+
+Guardrails are added after model scoring. They detect red flags that require analyst caution.
+
+Examples:
+
+| Guardrail family | Example issue |
+|---|---|
+| Leverage | High debt/assets or debt/EBITDA. |
+| Coverage | Weak interest coverage. |
+| Liquidity | Current ratio below 1.0 or quick ratio below 0.5. |
+| Structural distress | Negative equity or liabilities exceeding assets. |
+
+Guardrails are important because a cluster label can be too optimistic when a company has one severe red flag but looks normal on other dimensions.
+
+---
+
+## 12. Excel report structure
+
+The Excel report should be treated as the analyst workbook.
+
+Recommended tabs:
+
+| Tab | Purpose |
+|---|---|
+| `Score Summary` | Main label, risk rank, affinity, outlook, guardrails. |
+| `Ratio Snapshot` | Company financial ratios and risk features. |
+| `Cluster Comparison` | Company vs assigned-cluster median. |
+| `Scenario Analysis` | Base and stress scenario scoring. |
+| `Guardrails` | Triggered caution items and explanation. |
+| `Model Metadata` | Artifact version, feature list, assumptions. |
+
+The Excel output is useful for transparent review and debugging.
+
+---
+
+## 13. PDF report structure
+
+The PDF report should be concise, professional, and safe from overclaiming.
+
+Recommended sections:
+
+| PDF section | Purpose |
+|---|---|
+| Executive summary | One-page conclusion with model-relative label. |
+| Risk label scale | Explains the 1–5 labels. |
+| Company snapshot | Key financial ratios and risk drivers. |
+| Model diagnostics | Affinity, near-default affinity, distance, feature coverage. |
+| Guardrails | Analyst caution layer. |
+| Cluster comparison | How company compares with assigned bucket. |
+| Scenario analysis | Mechanical stress cases. |
+| Limitations | Prevents rating/PD overclaiming. |
+
+The first page should emphasize the business label and risk scale, not the raw cluster ID.
+
+---
+
+## 14. Reporting discipline
+
+Use:
+
+```text
+model-relative risk bucket
+financial-risk diagnostic
+benchmark-relative credit profile
+```
+
+Avoid:
+
+```text
+credit rating
+probability of default
+bank approval
+investment-grade rating
+```
+
+The report supports analyst judgment. It does not replace credit analysis.
+
+---
+
+## 15. Examiner / final-project relevance
+
+Notebook 03 demonstrates that the project goes beyond model fitting. It shows:
+
+- reusable source-code architecture;
+- private-company inference;
+- scenario analysis;
+- explainable model outputs;
+- professional reporting;
+- guardrails and limitations.
+
+This supports the SoftUni grading categories for code quality, methods, communication, and applied mathematical understanding.
