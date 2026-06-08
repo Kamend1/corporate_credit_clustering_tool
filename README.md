@@ -13,7 +13,7 @@
 
 This project builds a transparent, modular credit risk scoring workflow based on unsupervised machine learning. It uses financial statement data from SEC EDGAR filings to train a KMeans clustering model on public-company financial profiles, then uses the trained model as a benchmark for scoring companies by relative credit quality.
 
-The project has evolved from a pure clustering exercise into a broader credit analytics toolkit. It now supports:
+The project is structured as a broader credit analytics toolkit supporting:
 
 - public-company financial data extraction and feature engineering;
 - KMeans-based credit risk clustering;
@@ -111,7 +111,7 @@ Typical raw inputs include:
 
 Raw accounting data is converted into financial ratios, warning flags, and scorecard-style risk features. The model is designed to handle incomplete financial inputs pragmatically, especially for private-company scoring, while still flagging lower feature coverage when data quality is weak.
 
-Lower-level ratios include liquidity, leverage, profitability, cash-flow, and debt-serviceability measures. These are then transformed into higher-level risk dimensions used for clustering and scoring.
+Lower-level ratios include liquidity, leverage, profitability, operating cash-flow, and debt-serviceability measures. These are then transformed into higher-level risk dimensions used for clustering and scoring.
 
 ### 3. Scorecard Feature Design
 
@@ -119,12 +119,12 @@ The current model is not trained directly on dozens of raw accounting ratios. In
 
 | Feature | Interpretation |
 |---|---|
-| `structural_distress_risk` | Balance-sheet distress, negative equity, liabilities exceeding assets |
+| `structural_distress_risk` | Gradient balance-sheet vulnerability based on equity buffer and liabilities/assets; hard distress flags remain separate guardrails |
 | `earnings_risk` | Profitability weakness and negative earnings pressure |
-| `operating_cashflow_risk` | Weak or negative operating cash generation |
-| `liquidity_risk` | Current ratio, quick ratio, cash buffer, working-capital pressure |
-| `leverage_risk` | Debt load, liabilities/assets, debt/assets, equity buffer |
-| `debt_service_risk` | Interest coverage, FCF/debt, EBITDA coverage, debt/EBITDA |
+| `operating_cashflow_risk` | Weak operating cash generation relative to both assets and debt |
+| `liquidity_risk` | Short-term liquidity plus internal debt-repayment capacity from FCF/debt |
+| `leverage_risk` | Balance-sheet leverage, equity buffer, and net debt/EBITDA pressure |
+| `debt_service_risk` | Interest coverage, FCF/debt, EBITDA coverage, and debt/EBITDA |
 
 This approach keeps the model explainable. Instead of clustering companies on a black box of raw ratios, the model clusters them on credit concepts that are easier to interpret and report.
 
@@ -136,12 +136,12 @@ Typical steps include:
 
 - denominator safety checks;
 - missing value handling;
-- outlier control;
-- feature scaling;
+- bounded risk-score transformation;
+- optional outlier control for diagnostic ratios;
 - segment filtering; and
 - feature coverage diagnostics.
 
-Because KMeans is distance-based, scaling and outlier treatment are central to model quality.
+Because KMeans is distance-based, the model uses bounded and directionally consistent risk features so that distances between companies remain interpretable.
 
 ### 5. Clustering
 
@@ -258,13 +258,13 @@ The reporting layer is designed for review by analysts, finance professionals, c
 
 ```text
 corporate_credit_clustering_tool/
-|
+│
 ├── notebooks/
 │   ├── 01_obtain_model_training_data_EDGAR.ipynb
 │   ├── 02_credit_clustering.ipynb
 │   ├── 03_private_company_credit_scoring_tool_feature_patch.ipynb
 │   └── 04_agglomerative_dbscan_credit_clustering_comparison_v3_paths.ipynb
-|
+│
 ├── src/
 │   ├── credit_clustering/
 │   │   ├── config.py
@@ -274,11 +274,11 @@ corporate_credit_clustering_tool/
 │   │   ├── profiling.py
 │   │   ├── diagnostics.py
 │   │   └── artifacts.py
-│   |
+│   │
 │   └── utils/
-│       └── credit_report_util.py
-|       └── credit_pdf_report_util.py
-|
+│       ├── credit_report_util.py
+│       └── credit_pdf_report_util.py
+│
 ├── docs/
 ├── inputs/
 ├── requirements.txt
@@ -396,10 +396,11 @@ scored[[
     "cluster_label",
     "cluster_affinity",
     "near_default_affinity",
-    "outlook_flag",
     "warning_flags",
 ]]
 ```
+
+Adjacent-bucket outlook fields are added later by the diagnostics layer used in Notebook 03.
 
 Exact imports may vary as the package is refined, but the intended workflow is stable: load artifact, prepare company inputs, score company, review diagnostics, export outputs.
 
