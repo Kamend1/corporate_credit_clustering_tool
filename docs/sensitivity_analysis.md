@@ -1,409 +1,254 @@
-# Sensitivity Analysis and Robustness Plan
+# Sensitivity Analysis
 
-## Purpose of this document
+This document defines robustness checks for the Corporate Credit Clustering Tool.
 
-This document defines the sensitivity and robustness checks for the Corporate Credit Clustering Tool. It is both a future-development roadmap and a final-project methodological reference.
-
-The current project is an unsupervised model, so validation cannot rely on ordinary classification accuracy. Robustness must be assessed through cluster stability, financial interpretability, and sensitivity to design choices.
+The model is unsupervised and domain-guided. Therefore, validation must test both mathematical cluster behavior and financial interpretation.
 
 ---
 
 ## 1. Why sensitivity analysis matters
 
-The model contains analyst-defined choices:
+The model contains expert-defined assumptions:
 
-1. risk transformation thresholds;
-2. component risk formulas;
-3. domain weights;
-4. number of clusters `k`;
-5. imputation strategy;
-6. feature coverage rules;
-7. guardrail thresholds;
-8. scoring temperature for affinity.
+- risk thresholds;
+- component weights inside domain features;
+- scorecard domain weights;
+- imputation strategy;
+- number of clusters;
+- feature coverage thresholds;
+- guardrail thresholds.
 
-These choices are defensible, but they are still assumptions. A strong academic and professional project should show how much the results depend on them.
+Sensitivity analysis checks whether the model remains useful under reasonable changes to those assumptions.
 
-Core question:
+---
 
-```text
-Do the five risk tiers remain broadly stable under reasonable changes in assumptions?
+## 2. Component saturation analysis
+
+Because risk scores are bounded, inspect how often component scores equal 0 or 1.
+
+```python
+saturation = pd.DataFrame({
+    "zero_share": (df[risk_cols] == 0).mean(),
+    "one_share": (df[risk_cols] == 1).mean(),
+    "missing_share": df[risk_cols].isna().mean(),
+}).sort_values("one_share", ascending=False)
 ```
 
----
-
-## 2. Baseline model to compare against
-
-Baseline assumptions:
-
-| Parameter | Baseline |
+| Result | Meaning |
 |---|---|
-| Segment | Non-financial companies |
-| Features | Six scorecard domain risk features |
-| Number of clusters | 5 |
-| Algorithm | KMeans |
-| Initialization | k-means++ |
-| `n_init` | 500 |
-| Imputation | Median imputation |
-| Scorecard weights | Leverage 25%, liquidity 20%, operating cash flow 20%, earnings 15%, debt service 15%, structural distress 5% |
+| high `zero_share` | threshold may be too lenient or metric has limited variation |
+| high `one_share` | threshold may be too strict or data is extreme |
+| high `missing_share` | feature availability issue |
+| balanced distribution | useful gradient for KMeans |
 
-All sensitivity tests should compare results back to this baseline.
+A model dominated by exact 0s and 1s can become too binary for distance-based clustering.
 
 ---
 
-## 3. Key robustness metrics
+## 3. Threshold sensitivity
 
-### Adjusted Rand Index
+For each threshold pair, perturb the calibration and rerun the pipeline.
 
-Adjusted Rand Index, or ARI, compares two cluster assignment vectors while ignoring arbitrary cluster labels.
+Suggested perturbations:
 
-Interpretation:
+```text
+-20%, -10%, +10%, +20%
+```
 
-| ARI | Reading |
-|---:|---|
-| 1.00 | Identical clustering |
-| 0.85+ | Very stable |
-| 0.70–0.85 | Moderately stable |
-| 0.50–0.70 | Sensitive; investigate |
-| below 0.50 | Major instability |
+Record:
 
-ARI is useful because KMeans cluster IDs can change between runs.
+- Adjusted Rand Index versus baseline;
+- cluster size changes;
+- risk-rank ordering preservation;
+- financial monotonicity;
+- companies moving by more than one risk rank.
 
-### Rank preservation
+Important thresholds to test:
 
-After perturbation, clusters should still rank in a financially sensible order by median scorecard score.
-
-### Financial monotonicity
-
-Higher-risk clusters should generally show weaker:
-
-- leverage;
-- liquidity;
-- profitability;
-- cash flow;
+- liabilities/assets;
+- debt/assets;
+- equity/assets;
+- CFO/assets;
+- CFO/debt;
+- FCF/debt;
 - interest coverage;
-- structural distress indicators.
-
-### Representative-company plausibility
-
-Representative companies near each centroid should make intuitive business sense for the assigned risk tier.
+- debt/EBITDA;
+- net debt/EBITDA;
+- EBITDA interest coverage.
 
 ---
 
-## 4. k sensitivity
+## 4. Domain formula sensitivity
 
-### Test design
+### Leverage risk
 
-Train KMeans for:
+Baseline:
+
+```text
+0.30 liabilities_risk
+0.25 debt_load_risk
+0.20 equity_buffer_risk
+0.25 net_debt_to_ebitda_risk
+```
+
+Test equal weights, balance-sheet-heavy weights, and EBITDA-leverage-heavy weights.
+
+### Liquidity risk
+
+Baseline:
+
+```text
+0.35 current_liquidity_risk
+0.30 quick_liquidity_risk
+0.20 debt_repayment_risk
+0.15 cash_buffer_risk
+```
+
+Test pure working-capital liquidity, higher FCF/debt emphasis, and equal component weights.
+
+### Operating cash-flow risk
+
+Baseline:
+
+```text
+0.50 cashflow_risk
+0.50 cfo_to_debt_risk
+```
+
+Test 70/30, 30/70, pure CFO/assets, and pure CFO/debt variants.
+
+### Structural distress risk
+
+Baseline:
+
+```text
+0.60 equity_buffer_risk
+0.40 liabilities_risk
+```
+
+Test 50/50, equity-heavy, and liabilities-heavy variants.
+
+---
+
+## 5. Scorecard domain weight sensitivity
+
+Current scorecard weights:
+
+```python
+{
+    "leverage_risk": 0.25,
+    "liquidity_risk": 0.10,
+    "earnings_risk": 0.15,
+    "operating_cashflow_risk": 0.20,
+    "debt_service_risk": 0.25,
+    "structural_distress_risk": 0.05,
+}
+```
+
+Test alternatives:
+
+- equal-weight scorecard;
+- creditor-focused scorecard;
+- cash-flow-focused scorecard;
+- liquidity-focused scorecard.
+
+Metrics:
+
+- cluster rank preservation;
+- median scorecard score by cluster;
+- change in representative companies;
+- change in report conclusions.
+
+Scorecard weights affect ranking and interpretation. They do not directly change KMeans assignments unless explicitly used inside the clustering feature space.
+
+---
+
+## 6. k sensitivity
+
+Test:
 
 ```text
 k = 2, 3, 4, 5, 6, 7, 8
 ```
 
-For each value, record:
+Metrics:
 
 - inertia;
-- silhouette score;
+- silhouette coefficient;
 - Calinski-Harabasz index;
 - Davies-Bouldin index;
-- cluster sizes;
-- cluster profile medians.
+- cluster size balance;
+- financial monotonicity;
+- interpretability.
 
-### Interpretation
-
-`k = 5` is acceptable when it balances:
-
-- reasonable internal metrics;
-- interpretable tier structure;
-- usable cluster sizes;
-- monotone financial profiles;
-- business communication value.
-
-The point is not to blindly maximize one metric. In credit-risk segmentation, interpretability matters.
+Financial monotonicity matters more than a single metric.
 
 ---
 
-## 5. Random seed and initialization stability
+## 7. Bootstrap stability
 
-### Test design
+Recommended approach:
 
-Run the baseline KMeans model across multiple random states:
+1. sample 80% of observations;
+2. fit KMeans with k = 5;
+3. compare assignments with the baseline model using ARI;
+4. repeat 30–50 times.
 
-```python
-random_states = [1, 7, 21, 42, 100]
-```
+Useful outputs:
 
-For each run:
-
-1. fit KMeans with the same `k` and feature set;
-2. compute ARI versus the baseline assignment;
-3. compare cluster profiles;
-4. check whether risk-rank ordering is preserved.
-
-### Expected standard
-
-A stable model should show high ARI and similar cluster financial profiles across random states, especially with `n_init = 500`.
+- mean ARI;
+- minimum ARI;
+- rank preservation;
+- centroid stability.
 
 ---
 
-## 6. Bootstrap stability
+## 8. Imputation sensitivity
 
-### Test design
-
-For the non-financial training panel:
-
-1. draw bootstrap samples containing 80% of observations;
-2. train KMeans with `k = 5`;
-3. score the held-out or full common sample;
-4. compare assignments to the baseline model using ARI;
-5. repeat 30–50 times.
-
-### Target
-
-| Metric | Target |
-|---|---:|
-| Mean ARI | above 0.80 |
-| Minimum ARI | preferably above 0.65 |
-| Rank preservation | most bootstrap runs |
-
-Bootstrap instability would indicate that clusters are driven by a narrow subset of companies.
-
----
-
-## 7. Threshold sensitivity
-
-### Test design
-
-Perturb selected `RISK_THRESHOLDS` by ±10% and ±20%.
-
-High-priority thresholds:
-
-- interest coverage;
-- debt/assets;
-- liabilities/assets;
-- current ratio;
-- quick ratio;
-- debt/EBITDA;
-- net debt/EBITDA;
-- CFO/assets.
-
-For each perturbation:
-
-1. re-engineer features;
-2. rerun KMeans;
-3. rank clusters;
-4. calculate ARI versus baseline;
-5. inspect financial monotonicity.
-
-### Suggested pass levels
-
-| Perturbation | Desired ARI |
-|---|---:|
-| ±10% | above 0.85 |
-| ±20% | above 0.70 |
-
-If a single threshold causes major instability, the model is overly dependent on that assumption.
-
----
-
-## 8. Domain-weight sensitivity
-
-Domain weights affect the `scorecard_credit_score` and post-hoc ranking. Depending on implementation, they may also affect engineered feature construction if domain aggregation is changed.
-
-### Test A: Equal weights
-
-Replace the default domain weights with equal weights:
-
-```text
-1/6 for each domain
-```
-
-Then check:
-
-- whether cluster ranking changes;
-- whether labels remain sensible;
-- whether representative companies still look plausible.
-
-### Test B: Conservative lender weights
-
-Increase leverage and debt-service emphasis.
-
-### Test C: SME liquidity/cash-flow weights
-
-Increase liquidity and operating cash-flow emphasis.
-
-### Test D: Random Dirichlet weights
-
-Sample random weight vectors and test how often cluster ranking is preserved.
-
-Suggested target:
-
-```text
-risk-rank ordering preserved in more than 90% of reasonable weight vectors
-```
-
----
-
-## 9. Leave-one-domain-out sensitivity
-
-### Test design
-
-Remove one of the six domain features and retrain KMeans:
-
-- without leverage risk;
-- without liquidity risk;
-- without earnings risk;
-- without operating cash-flow risk;
-- without debt-service risk;
-- without structural distress risk.
-
-For each model:
-
-- calculate ARI versus baseline;
-- inspect cluster profiles;
-- identify which removed domain causes the most disruption.
-
-### Interpretation
-
-If removing one domain collapses the cluster structure, that domain is the dominant separator. This is not automatically bad, but it should be disclosed.
-
----
-
-## 10. Imputation sensitivity
-
-Baseline uses median imputation inside the scikit-learn pipeline.
-
-Alternative tests:
+Compare:
 
 | Strategy | Description |
 |---|---|
-| Complete-case only | Drop rows with any missing model feature. |
-| Midpoint imputation | Impute missing bounded features to 0.5. |
-| Conservative imputation | Impute missing risk features to worse-than-median values. |
+| median imputation | baseline |
+| complete-case only | drop rows with missing model features |
+| midpoint imputation | fill missing bounded risks with 0.5 |
+| missingness indicators | add flags for missing components |
 
-Compare assignments on the common sample using ARI.
-
-Purpose:
-
-```text
-Check whether the model is learning credit-risk structure or missing-data structure.
-```
+Inspect cluster assignments, feature coverage, and financial profile quality.
 
 ---
 
-## 11. Feature coverage sensitivity
+## 9. Missingness sensitivity for debt-capacity fields
 
-Test stricter and looser row inclusion rules.
+Debt-capacity fields are high impact:
 
-| Setting | Meaning |
+| Input | Affected features |
 |---|---|
-| Minimum 3 of 6 features | More inclusive, more imputation. |
-| Minimum 4 of 6 features | Current balanced default. |
-| Minimum 5 of 6 features | Cleaner but smaller sample. |
-| Minimum 6 of 6 features | Complete model-feature coverage only. |
+| total debt | debt/assets, CFO/debt, FCF/debt, debt/EBITDA |
+| CFO | CFO/assets, CFO/debt, FCF/debt |
+| capex | FCF/debt |
+| EBITDA | EBITDA margin, debt/EBITDA, net debt/EBITDA, EBITDA coverage |
+| interest expense | EBIT coverage, EBITDA coverage |
 
-For each setting:
-
-- observe sample size;
-- run KMeans;
-- compare ARI;
-- inspect whether clusters become cleaner or less representative.
+Low feature coverage should reduce confidence in the output.
 
 ---
 
-## 12. Alternative algorithm comparison
+## 10. Reporting sensitivity results
 
-Notebook 04 should compare KMeans to:
-
-| Method | Robustness question |
-|---|---|
-| Agglomerative clustering | Do the risk tiers have hierarchical structure? |
-| DBSCAN | Are there natural dense groups or clear outlier/distress regions? |
-| PCA visualization | Does the six-dimensional structure show visible separation in 2D/3D? |
-
-Alternative methods do not need to replace KMeans. Their role is to test whether KMeans is producing plausible structure rather than arbitrary segmentation.
-
----
-
-## 13. Guardrail sensitivity
-
-Guardrails are post-model diagnostics, but they affect interpretation.
-
-Tests:
-
-- tighten leverage guardrails;
-- loosen leverage guardrails;
-- tighten liquidity guardrails;
-- increase interest coverage threshold;
-- test how many companies move from Clear/Monitor to Caution/High caution.
-
-Report:
-
-```text
-percentage of scored companies affected by each guardrail family
-```
-
-This helps distinguish model classification from analyst caution.
-
----
-
-## 14. Scoring temperature sensitivity
-
-Temperature affects affinities, not cluster assignment.
-
-Test:
-
-```text
-T = 0.3, 0.5, 1.0, 2.0, 3.0
-```
-
-Record:
-
-- assigned-cluster affinity;
-- near-default affinity;
-- whether interpretation becomes too sharp or too flat.
-
-Recommended default remains `T = 1.0` unless the report clearly explains a different value.
-
----
-
-## 15. Minimum recommended tests for the SoftUni final version
-
-For the final course project, the minimum academically useful robustness package is:
-
-| Test | Status target |
-|---|---|
-| k sweep from 2 to 8 | Implemented in Notebook 02 |
-| cluster profile monotonicity | Implemented in Notebook 02 |
-| alternative clustering comparison | Implemented in Notebook 04 |
-| one random-state stability test | Recommended |
-| one imputation or threshold sensitivity test | Recommended |
-| scenario sensitivity in Notebook 03 | Implemented / demonstrated |
-
-If time is limited, prioritize one small sensitivity table that Dancho can see in the notebook.
-
----
-
-## 16. Reporting template for sensitivity results
+A compact sensitivity table should include:
 
 | Test | Metric | Result | Interpretation |
-|---|---|---:|---|
-| Baseline k=5 | Reference | 1.00 | Baseline model |
-| Random state variation | ARI vs baseline | TBD | Stability of initialization |
-| Equal domain weights | Rank preservation | TBD | Weight robustness |
-| Complete-case imputation | ARI vs baseline | TBD | Missing-data robustness |
-| k=4 vs k=5 | Qualitative | TBD | Whether adjacent tiers merge sensibly |
-| DBSCAN comparison | Noise share / NMI | TBD | Outlier structure |
-
-Do not invent results. If a test has not been run, mark it as planned or future work.
+|---|---|---|---|
+| threshold perturbation | minimum ARI | value | stable/sensitive |
+| k sweep | selected k | value | rationale |
+| scorecard weights | rank preservation | value | stable/sensitive |
+| imputation test | ARI | value | stable/sensitive |
+| saturation test | max zero/one share | value | acceptable/problematic |
+| bootstrap | mean ARI | value | stable/sensitive |
 
 ---
 
-## 17. Bottom line
+## 11. Summary
 
-A good unsupervised ML project is not validated by accuracy alone. For this project, credibility comes from:
-
-```text
-stable clusters + interpretable financial profiles + sensible sensitivity behavior + transparent limitations
-```
-
-The sensitivity framework should gradually move from roadmap to executed evidence as the project matures.
+A good unsupervised credit model should remain financially interpretable under reasonable changes to assumptions. If clusters collapse, reorder unpredictably, or lose financial monotonicity under small changes, the configuration should be reviewed.

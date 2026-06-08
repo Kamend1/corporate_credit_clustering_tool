@@ -21,10 +21,10 @@ SCORECARD_CLUSTER_FEATURES = [
 
 SCORECARD_DOMAIN_WEIGHTS = {
     "leverage_risk": 0.25,
-    "liquidity_risk": 0.20,
+    "liquidity_risk": 0.10,          # намалено от 0.20 — debt-repayment capacity вече е в liquidity_risk формулата
     "earnings_risk": 0.15,
     "operating_cashflow_risk": 0.20,
-    "debt_service_risk": 0.15,
+    "debt_service_risk": 0.25,       # увеличено от 0.15 — coverage/FCF е водещ credit signal
     "structural_distress_risk": 0.05,
 }
 
@@ -38,8 +38,10 @@ SCORECARD_COMPONENT_FEATURES = [
     "quick_liquidity_risk",
     "profitability_risk",
     "cashflow_risk",
+    "cfo_to_debt_risk",        # ново (корекция 1) — CFO/debt за operating_cashflow_risk
     "coverage_risk",
     "fcf_risk",
+    "debt_repayment_risk",     # ново (корекция 5) — FCF/debt за liquidity_risk
     "ebitda_margin_risk",
     "debt_to_ebitda_risk",
     "net_debt_to_ebitda_risk",
@@ -321,20 +323,26 @@ MONETARY_COLUMNS = REQUIRED_OR_OPTIONAL_FINANCIAL_COLUMNS.copy()
 # ---------------------------------------------------------------------
 
 RISK_THRESHOLDS = {
-    "liabilities_to_assets": {"low": 0.45, "high": 1.00},
-    "debt_to_assets": {"low": 0.25, "high": 0.85},
-    "equity_to_assets": {"good": 0.40, "bad": 0.00},
-    "cash_to_assets": {"good": 0.10, "bad": 0.01},
-    "current_ratio": {"good": 2.00, "bad": 0.75},
-    "quick_ratio": {"good": 1.00, "bad": 0.25},
-    "net_income_to_assets": {"good": 0.05, "bad": -0.05},
-    "cfo_to_assets": {"good": 0.08, "bad": -0.03},
-    "interest_coverage": {"good": 3.00, "bad": 1.00},
-    "fcf_to_debt": {"good": 0.15, "bad": -0.10},
-    "ebitda_margin": {"good": 0.20, "bad": 0.00},
-    "debt_to_ebitda": {"low": 2.0, "high": 6.0},
-    "net_debt_to_ebitda": {"low": 1.5, "high": 5.0},
-    "ebitda_interest_coverage": {"good": 4.0, "bad": 1.5},
+    "liabilities_to_assets": {"low": 0.15, "high": 2.00},
+    "debt_to_assets": {"low": 0.15, "high": 0.95},
+    "equity_to_assets": {"good": 0.80, "bad": 0.00},
+
+    "cash_to_assets": {"good": 0.15, "bad": 0.005},
+    "current_ratio": {"good": 2.50, "bad": 0.50},
+    "quick_ratio": {"good": 1.50, "bad": 0.25},
+
+    "net_income_to_assets": {"good": 0.45, "bad": -0.45},
+    "cfo_to_assets": {"good": 0.80, "bad": -0.30},
+    "cfo_to_debt": {"good": 0.90, "bad": -0.35},
+
+    "interest_coverage": {"good": 4.00, "bad": 0.75},
+    "fcf_to_debt": {"good": 0.85, "bad": -0.85},
+    "debt_repayment_capacity": {"good": 0.45, "bad": -0.45},
+
+    "ebitda_margin": {"good": 0.35, "bad": -0.05},
+    "debt_to_ebitda": {"low": 1.0, "high": 6.0},
+    "net_debt_to_ebitda": {"low": 1.0, "high": 5.0},
+    "ebitda_interest_coverage": {"good": 4.0, "bad": 0.5},
 }
 
 # ---------------------------------------------------------------------

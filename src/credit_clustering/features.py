@@ -408,6 +408,17 @@ def _add_component_risks(out):
         bad=t["fcf_to_debt"]["bad"],
     )
 
+    # Корекция 1: CFO спрямо дълга (не спрямо активите) за operating_cashflow_risk.
+    # cfo_to_assets е размерно-зависим и се занулява при капиталоинтензивни компании
+    # с голяма asset base. cfo_to_debt директно измерва debt-repayment capacity от
+    # оперативния кеш поток.
+    cfo_to_debt = safe_divide(out["cfo"], out["total_debt"].abs())
+    out["cfo_to_debt_risk"] = linear_risk_bad_low(
+        cfo_to_debt,
+        good=t["cfo_to_debt"]["good"],
+        bad=t["cfo_to_debt"]["bad"],
+    )
+
     out["ebitda_margin_risk"] = linear_risk_bad_low(
         out["ebitda_margin"],
         good=t["ebitda_margin"]["good"],
@@ -432,6 +443,14 @@ def _add_component_risks(out):
         bad=t["ebitda_interest_coverage"]["bad"],
     )
 
+    # Корекция 5: FCF/debt като мярка за способността за изплащане на дълга
+    # от свободния кеш поток — използва се в liquidity_risk формулата.
+    out["debt_repayment_risk"] = linear_risk_bad_low(
+        out["fcf_to_debt"],
+        good=t["debt_repayment_capacity"]["good"],
+        bad=t["debt_repayment_capacity"]["bad"],
+    )
+
     out["negative_ebitda_flag"] = np.where(
         out["ebitda"].notna(),
         (out["ebitda"] <= 0).astype(int),
@@ -448,29 +467,62 @@ def _add_structural_distress_flags(out):
         out["liabilities_to_assets"] > 1
     ).astype(int)
 
-    out["structural_distress_risk"] = np.maximum(
-        out["negative_equity_flag"],
-        out["liabilities_exceed_assets_flag"],
-    )
+    # Корекция 4: structural_distress_risk е заменен с градиентен композит.
+    # Оригиналният max(binary, binary) дава 0 за всяка компания без negative equity
+    # или liabilities > assets — т.е. не разграничава equity_ratio 5% от 50%.
+    # Новата формула комбинира вече-изчислените градиентни компоненти:
+    #   - equity_buffer_risk:  0 при equity/assets ≥ 0.40, 1 при equity/assets ≤ 0.00
+    #   - liabilities_risk:    0 при liabilities/assets ≤ 0.45, 1 при ≥ 1.00
+    # Бинарните flags се запазват за guardrails и warning_flags (scoring.py ги ползва).
+    # Когато компонентите все още не са изчислени (ранен извик), пада до legacy логика.
+    if "equity_buffer_risk" in out.columns and "liabilities_risk" in out.columns:
+        out["structural_distress_risk"] = (
+            0.60 * out["equity_buffer_risk"]
+            + 0.40 * out["liabilities_risk"]
+        )
+    else:
+        out["structural_distress_risk"] = np.maximum(
+            out["negative_equity_flag"],
+            out["liabilities_exceed_assets_flag"],
+        )
 
     return out
 
 
 def _add_domain_risk_features(out):
+    # Корекция 3: leverage_risk включва net_debt_to_ebitda_risk като четвърти компонент.
+    # Оригиналната формула (liabilities + debt_load + equity_buffer) не съдържа
+    # пряка EBITDA-relative leverage метрика. net_debt_to_ebitda_risk вече е изчислен
+    # в _add_component_risks и носи директен сигнал за debt capacity.
     out["leverage_risk"] = (
-        0.40 * out["liabilities_risk"]
-        + 0.35 * out["debt_load_risk"]
-        + 0.25 * out["equity_buffer_risk"]
+        0.30 * out["liabilities_risk"]
+        + 0.25 * out["debt_load_risk"]
+        + 0.20 * out["equity_buffer_risk"]
+        + 0.25 * out["net_debt_to_ebitda_risk"]
     )
 
+    # Корекция 5: liquidity_risk добавя debt_repayment_risk като трети компонент.
+    # Оригиналната формула (current + quick + cash_buffer) измерва само краткосрочна
+    # ликвидност. debt_repayment_risk (FCF/debt) добавя способността за изплащане
+    # на дълга от свободния кеш — критичен сигнал за капиталоинтензивни компании.
     out["liquidity_risk"] = (
-        0.45 * out["current_liquidity_risk"]
-        + 0.40 * out["quick_liquidity_risk"]
+        0.35 * out["current_liquidity_risk"]
+        + 0.30 * out["quick_liquidity_risk"]
+        + 0.20 * out["debt_repayment_risk"]
         + 0.15 * out["cash_buffer_risk"]
     )
 
     out["earnings_risk"] = out["profitability_risk"]
-    out["operating_cashflow_risk"] = out["cashflow_risk"]
+
+    # Корекция 1: operating_cashflow_risk е заменен с 50/50 комбинация между
+    # cashflow_risk (cfo_to_assets — размерна метрика) и cfo_to_debt_risk
+    # (cfo_to_debt — debt-relative метрика). Чистото cfo_to_assets се занулява
+    # при капиталоинтензивни компании с голяма asset base и умерен FCF margin,
+    # давайки false-positive сигнал за нулев риск.
+    out["operating_cashflow_risk"] = (
+        0.50 * out["cashflow_risk"]
+        + 0.50 * out["cfo_to_debt_risk"]
+    )
 
     # Legacy debt-service risk, kept as fallback when EBITDA metrics are missing.
     out["debt_service_risk_legacy"] = (
