@@ -211,11 +211,16 @@ def create_issuer_year_facts_table(
     - detected value column name
     - detected sort column name, if any
     """
+
     concept_lookup = concept_lookup_frame(concept_map)
     con.register("concept_lookup", concept_lookup)
 
     value_col = detect_numeric_value_column(schema)
     sort_col = detect_sort_column(schema)
+
+    year_values = ", ".join(
+        f"'{year}'" for year in range(int(start_year), int(end_year) + 1)
+    )
 
     con.execute(
         f"""
@@ -231,8 +236,8 @@ def create_issuer_year_facts_table(
         FROM {raw_view_name} rf
         JOIN concept_lookup cl
             ON rf.concept = cl.concept
-        WHERE TRY_CAST(rf.fiscal_year AS INTEGER) BETWEEN {int(start_year)} AND {int(end_year)}
-          AND rf.fiscal_period = '{fiscal_period}'
+        WHERE rf.fiscal_period = '{fiscal_period}'
+          AND CAST(rf.fiscal_year AS VARCHAR) IN ({year_values})
           AND TRY_CAST(rf.{value_col} AS DOUBLE) IS NOT NULL
         GROUP BY 1,2,4,5,6
         """
@@ -251,7 +256,6 @@ def create_issuer_year_facts_table(
     ).df()
 
     return facts_summary, value_col, sort_col
-
 
 def build_issuer_year_panel(
     con,

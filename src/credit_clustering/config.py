@@ -323,26 +323,31 @@ MONETARY_COLUMNS = REQUIRED_OR_OPTIONAL_FINANCIAL_COLUMNS.copy()
 # ---------------------------------------------------------------------
 
 RISK_THRESHOLDS = {
-    "liabilities_to_assets": {"low": 0.15, "high": 2.00},
-    "debt_to_assets": {"low": 0.15, "high": 0.95},
-    "equity_to_assets": {"good": 0.80, "bad": 0.00},
+    # --- Leverage ---
+    "liabilities_to_assets":    {"low": 0.30,  "high": 0.95},
+    "debt_to_assets":           {"low": 0.10,  "high": 0.75},
+    "equity_to_assets":         {"good": 0.65, "bad": 0.00},
 
-    "cash_to_assets": {"good": 0.15, "bad": 0.005},
-    "current_ratio": {"good": 2.50, "bad": 0.50},
-    "quick_ratio": {"good": 1.50, "bad": 0.25},
+    # --- Liquidity ---
+    "cash_to_assets":           {"good": 0.15, "bad": 0.005},
+    "current_ratio":            {"good": 2.50, "bad": 0.50},
+    "quick_ratio":              {"good": 1.50, "bad": 0.25},
 
-    "net_income_to_assets": {"good": 0.45, "bad": -0.45},
-    "cfo_to_assets": {"good": 0.80, "bad": -0.30},
-    "cfo_to_debt": {"good": 0.90, "bad": -0.35},
+    # --- Profitability / cash generation ---
+    "net_income_to_assets":     {"good": 0.10, "bad": -0.05},
+    "cfo_to_assets":            {"good": 0.20, "bad": -0.05},
+    "cfo_to_debt":              {"good": 0.60, "bad": 0.02},
 
-    "interest_coverage": {"good": 4.00, "bad": 0.75},
-    "fcf_to_debt": {"good": 0.85, "bad": -0.85},
-    "debt_repayment_capacity": {"good": 0.45, "bad": -0.45},
+    # --- Debt service ---
+    "interest_coverage":        {"good": 12.0, "bad": 0.80},
+    "fcf_to_debt":              {"good": 0.40, "bad": -0.10},
+    "debt_repayment_capacity":  {"good": 0.40, "bad": -0.08},
 
-    "ebitda_margin": {"good": 0.35, "bad": -0.05},
-    "debt_to_ebitda": {"low": 1.0, "high": 6.0},
-    "net_debt_to_ebitda": {"low": 1.0, "high": 5.0},
-    "ebitda_interest_coverage": {"good": 4.0, "bad": 0.5},
+    # --- EBITDA-based ---
+    "ebitda_margin":            {"good": 0.35, "bad": -0.05},
+    "debt_to_ebitda":           {"low": 1.0,   "high": 6.0},
+    "net_debt_to_ebitda":       {"low": 1.0,   "high": 5.0},
+    "ebitda_interest_coverage": {"good": 20.0, "bad": 1.00},
 }
 
 # ---------------------------------------------------------------------
