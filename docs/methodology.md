@@ -10,7 +10,7 @@ The notebook write-up should tell the story step by step for the SoftUni final p
 
 ## 1. Project framing
 
-The project studies whether unsupervised machine learning can produce an interpretable corporate credit-risk segmentation from public financial-statement data.
+The project studies whether unsupervised machine learning can produce an interpretable corporate credit-risk segmentation from public financial statement data.
 
 ### Real-world problem
 
@@ -39,7 +39,7 @@ The output is a model-relative credit-risk label, not a formal credit rating.
 
 ---
 
-## 2. Data acquisition: Notebook 01
+## 2. Data acquisition: Notebook 04
 
 Raw financial data is obtained from SEC EDGAR filings through structured XBRL facts.
 
@@ -321,9 +321,9 @@ Affinity is a similarity measure. It is not probability of default and not stati
 
 ---
 
-## 13. Alternative methods: Notebook 04
+## 13. Alternative methods: Notebook 02
 
-Notebook 04 compares KMeans with other unsupervised approaches.
+Notebook 02 compares KMeans with other unsupervised approaches.
 
 | Method | Why tested | Why not primary |
 |---|---|---|
