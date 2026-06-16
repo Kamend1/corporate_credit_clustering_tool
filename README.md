@@ -260,10 +260,10 @@ The reporting layer is designed for review by analysts, finance professionals, c
 corporate_credit_clustering_tool/
 │
 ├── notebooks/
-│   ├── 01_obtain_model_training_data_EDGAR.ipynb
-│   ├── 02_credit_clustering.ipynb
+│   ├── 01_credit_clustering.ipynb
+│   ├── 02_agglomerative_dbscan_credit_clustering_comparison.ipynb
 │   ├── 03_private_company_credit_scoring_tool_feature_patch.ipynb
-│   └── 04_agglomerative_dbscan_credit_clustering_comparison_v3_paths.ipynb
+│   └── 04_obtain_model_training_data_EDGAR.ipynb
 │
 ├── src/
 │   ├── credit_clustering/
