@@ -87,6 +87,48 @@ def linear_risk_bad_low(x, good, bad):
 _linear_risk_bad_low = linear_risk_bad_low
 
 
+def _weighted_risk(out, weighted_components):
+    """
+    Combine bounded [0, 1] risk components into a domain-level risk feature,
+    renormalizing over the weights of the components that are actually present
+    on each row.
+
+    weighted_components : list of (column_name, weight) tuples.
+
+    Why this exists
+    ---------------
+    The domain features previously used raw weighted sums, e.g.
+
+        leverage_risk = 0.30 * liabilities_risk + ... + 0.25 * net_debt_to_ebitda_risk
+
+    Because NaN propagates through addition, a single missing component (for
+    example net_debt_to_ebitda_risk for a negative-EBITDA issuer, or any
+    debt-relative component for a debt-free issuer) collapsed the *entire*
+    domain feature to NaN. The clustering pipeline then median-imputed that
+    NaN, silently pulling distressed and debt-free issuers toward the universe
+    average.
+
+    This helper mirrors the missing-weight handling already used in
+    ``_add_scorecard_credit_score``: present components are weighted and the
+    result is divided by the weight that was actually available, so the feature
+    is NaN only when *every* component is missing for a row. When all components
+    are present the output is identical to the original weighted sum (the
+    weights in each domain feature sum to 1.0), so this change is backward
+    compatible for complete data.
+    """
+    weighted_sum = pd.Series(0.0, index=out.index)
+    available_weight = pd.Series(0.0, index=out.index)
+
+    for col, weight in weighted_components:
+        if col in out.columns:
+            valid = out[col].notna()
+            weighted_sum = weighted_sum + out[col].fillna(0.0) * weight
+            available_weight = available_weight + valid.astype(float) * weight
+
+    # NaN only when no component was available for the row.
+    return weighted_sum / available_weight.replace(0.0, np.nan)
+
+
 def _coerce_and_convert_monetary_columns(out, fx_to_model_currency):
     for col in MONETARY_COLUMNS:
         out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -490,26 +532,43 @@ def _add_structural_distress_flags(out):
 
 
 def _add_domain_risk_features(out):
+    # All domain features are combined with _weighted_risk, which renormalizes
+    # over the components actually present on each row. This prevents a single
+    # missing component from collapsing the whole feature to NaN (which the
+    # clustering imputer would then backfill to the universe median). For rows
+    # with every component present the output equals the original weighted sum.
+
     # Корекция 3: leverage_risk включва net_debt_to_ebitda_risk като четвърти компонент.
     # Оригиналната формула (liabilities + debt_load + equity_buffer) не съдържа
     # пряка EBITDA-relative leverage метрика. net_debt_to_ebitda_risk вече е изчислен
     # в _add_component_risks и носи директен сигнал за debt capacity.
-    out["leverage_risk"] = (
-        0.30 * out["liabilities_risk"]
-        + 0.25 * out["debt_load_risk"]
-        + 0.20 * out["equity_buffer_risk"]
-        + 0.25 * out["net_debt_to_ebitda_risk"]
+    # net_debt_to_ebitda_risk е NaN при отрицателна/липсваща EBITDA — в такъв случай
+    # leverage_risk се преизчислява само върху наличните три компонента, вместо да
+    # стане NaN и да бъде заменен с медианата.
+    out["leverage_risk"] = _weighted_risk(
+        out,
+        [
+            ("liabilities_risk", 0.30),
+            ("debt_load_risk", 0.25),
+            ("equity_buffer_risk", 0.20),
+            ("net_debt_to_ebitda_risk", 0.25),
+        ],
     )
 
     # Корекция 5: liquidity_risk добавя debt_repayment_risk като трети компонент.
     # Оригиналната формула (current + quick + cash_buffer) измерва само краткосрочна
     # ликвидност. debt_repayment_risk (FCF/debt) добавя способността за изплащане
     # на дълга от свободния кеш — критичен сигнал за капиталоинтензивни компании.
-    out["liquidity_risk"] = (
-        0.35 * out["current_liquidity_risk"]
-        + 0.30 * out["quick_liquidity_risk"]
-        + 0.20 * out["debt_repayment_risk"]
-        + 0.15 * out["cash_buffer_risk"]
+    # debt_repayment_risk е NaN при нулев/липсващ дълг — тогава ликвидността се
+    # оценява само по текущите ликвидни компоненти (renormalization).
+    out["liquidity_risk"] = _weighted_risk(
+        out,
+        [
+            ("current_liquidity_risk", 0.35),
+            ("quick_liquidity_risk", 0.30),
+            ("debt_repayment_risk", 0.20),
+            ("cash_buffer_risk", 0.15),
+        ],
     )
 
     out["earnings_risk"] = out["profitability_risk"]
@@ -519,23 +578,36 @@ def _add_domain_risk_features(out):
     # (cfo_to_debt — debt-relative метрика). Чистото cfo_to_assets се занулява
     # при капиталоинтензивни компании с голяма asset base и умерен FCF margin,
     # давайки false-positive сигнал за нулев риск.
-    out["operating_cashflow_risk"] = (
-        0.50 * out["cashflow_risk"]
-        + 0.50 * out["cfo_to_debt_risk"]
+    # При нулев дълг cfo_to_debt_risk е NaN и рискът пада обратно върху cashflow_risk.
+    out["operating_cashflow_risk"] = _weighted_risk(
+        out,
+        [
+            ("cashflow_risk", 0.50),
+            ("cfo_to_debt_risk", 0.50),
+        ],
     )
 
-    # Legacy debt-service risk, kept as fallback when EBITDA metrics are missing.
-    out["debt_service_risk_legacy"] = (
-        0.60 * out["coverage_risk"]
-        + 0.40 * out["fcf_risk"]
+    # Legacy debt-service risk, kept as a final fallback when the EBITDA-enhanced
+    # version has no available components at all.
+    out["debt_service_risk_legacy"] = _weighted_risk(
+        out,
+        [
+            ("coverage_risk", 0.60),
+            ("fcf_risk", 0.40),
+        ],
     )
 
-    # EBITDA-enhanced debt-service risk.
-    out["debt_service_risk"] = (
-        0.35 * out["coverage_risk"]
-        + 0.25 * out["fcf_risk"]
-        + 0.25 * out["debt_to_ebitda_risk"]
-        + 0.15 * out["ebitda_coverage_risk"]
+    # EBITDA-enhanced debt-service risk. Missing EBITDA components (e.g. negative
+    # EBITDA) are dropped and the remaining weights renormalized rather than
+    # nulling the whole feature.
+    out["debt_service_risk"] = _weighted_risk(
+        out,
+        [
+            ("coverage_risk", 0.35),
+            ("fcf_risk", 0.25),
+            ("debt_to_ebitda_risk", 0.25),
+            ("ebitda_coverage_risk", 0.15),
+        ],
     )
 
     out["debt_service_risk"] = out["debt_service_risk"].fillna(

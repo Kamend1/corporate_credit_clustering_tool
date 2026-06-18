@@ -139,7 +139,7 @@ Mitigation:
 
 ## 6. Missing data and imputation risk
 
-The KMeans pipeline uses imputation for missing model features. Median imputation can pull low-coverage companies toward the center of the distribution.
+The KMeans pipeline uses imputation for missing model features. Median imputation can pull low-coverage companies toward the center of the distribution. In the v4 feature-engineering version, domain-level risk features use available-component weighted aggregation, which reduces unnecessary missing domain features when only one sub-component is unavailable. This improves coverage, but it does not remove the need to review feature completeness.
 
 Impact:
 

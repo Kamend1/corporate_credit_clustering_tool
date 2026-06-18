@@ -251,8 +251,8 @@ DEFAULT_N_INIT = 500
 DEFAULT_RATING_STYLE_LABELS = {
     1: "1 - Strong relative credit profile",
     2: "2 - Good credit profile",
-    3: "3 - Leveraged / elevated risk profile",
-    4: "4 - Weak credit profile",
+    3: "3 - Loss-making / cash-flow weak profile",
+    4: "4 - Leveraged / weak operating credit profile",
     5: "5 - Distressed / near-default proxy",
 }
 
@@ -283,7 +283,7 @@ DEFAULT_SCORING_MIN_DENOMINATOR = SME_MIN_DENOMINATOR
 # Artifact defaults
 # ---------------------------------------------------------------------
 
-DEFAULT_ARTIFACT_VERSION = "v3_scorecard_ebitda"
+DEFAULT_ARTIFACT_VERSION = "v4_scorecard_ebitda"
 DEFAULT_PRIMARY_SEGMENT = "Non-financial"
 
 

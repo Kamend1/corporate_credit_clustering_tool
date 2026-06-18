@@ -166,7 +166,7 @@ The scoring path may also apply:
 | `fx_to_model_currency` | Currency conversion multiplier. |
 | `min_denominator` | SME-compatible ratio denominator threshold. |
 
-In the current v3 scorecard model, winsorization is not the central modeling step. The model relies mainly on bounded risk transformations.
+In the current v4 scorecard model, winsorization is not the central modeling step. The model relies mainly on bounded risk transformations.
 
 The bounded transformations use the same current `RISK_THRESHOLDS` as the training path. These thresholds are professionally selected, judgment-based breakpoints. They are not agency-rating rules. Debt-service thresholds are intentionally conservative, so the report can distinguish excellent coverage from merely adequate coverage.
 
@@ -353,7 +353,7 @@ Recommended sections:
 | Scenario analysis | Mechanical stress cases. |
 | Limitations | Prevents rating/PD overclaiming. |
 
-The first page should emphasize the business label and risk scale, not the raw cluster ID.
+The first page should emphasize the business label and risk scale, not the raw cluster ID. In the current v4 label scale, the third bucket is a loss-making / cash-flow weak profile and the fourth bucket is a leveraged / weak operating credit profile.
 
 ---
 

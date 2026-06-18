@@ -146,7 +146,7 @@ This makes the feature space mathematically suitable for Euclidean distance and 
 
 ### Current threshold calibration philosophy
 
-The current v3 scorecard EBITDA calibration uses analyst-defined thresholds that are broad enough to avoid excessive clipping, but still anchored in financially interpretable corporate-credit ranges.
+The current v4 weighted-domain-risk scorecard calibration uses analyst-defined thresholds that are broad enough to avoid excessive clipping, but still anchored in financially interpretable corporate-credit ranges.
 
 | Area | Calibration logic |
 |---|---|
@@ -160,7 +160,7 @@ The current v3 scorecard EBITDA calibration uses analyst-defined thresholds that
 
 ## 6. Domain-level model features
 
-Component risks are aggregated into six domain features.
+Component risks are aggregated into six domain features. In the final v4 implementation, domain features are calculated using available-component weighted aggregation. This means that if one sub-component is unavailable, the whole domain feature does not automatically become missing; instead, the available component weights are re-normalized. This reduces unnecessary median imputation and keeps more issuer-year observations in the model.
 
 | Domain feature | Construction logic |
 |---|---|
@@ -171,7 +171,7 @@ Component risks are aggregated into six domain features.
 | `debt_service_risk` | EBIT interest coverage, FCF/debt, debt/EBITDA, and EBITDA interest coverage |
 | `structural_distress_risk` | gradient balance-sheet vulnerability based on equity buffer and liabilities/assets |
 
-Because these features are already bounded and directionally aligned, the v3 scorecard model does not apply StandardScaler before KMeans. Scaling would weaken the intended financial meaning of the bounded risk space.
+Because these features are already bounded and directionally aligned, the v4 scorecard model does not apply StandardScaler before KMeans. Scaling would weaken the intended financial meaning of the bounded risk space.
 
 ---
 
@@ -239,7 +239,7 @@ The goal is not to predict default. The goal is to group companies with similar 
 
 ### KMeans limitation
 
-KMeans assumes that Euclidean distance and centroid proximity are meaningful. It also tends to favor compact, roughly spherical clusters. Credit risk may not naturally form perfect spherical groups, so the project compares KMeans with hierarchical clustering and DBSCAN in Notebook 04.
+KMeans assumes that Euclidean distance and centroid proximity are meaningful. It also tends to favor compact, roughly spherical clusters. Credit risk may not naturally form perfect spherical groups, so the project compares KMeans with hierarchical clustering and DBSCAN in Notebook 02. Notebook 04 is reserved for the EDGAR data-acquisition appendix.
 
 ---
 
@@ -270,8 +270,8 @@ Recommended labels:
 |---:|---|
 | 1 | Strong relative credit profile |
 | 2 | Good credit profile |
-| 3 | Leveraged / elevated risk profile |
-| 4 | Weak credit profile |
+| 3 | Loss-making / cash-flow weak profile |
+| 4 | Leveraged / weak operating credit profile |
 | 5 | Distressed / near-default proxy |
 
 These labels are not formal ratings. They are model-relative interpretations.

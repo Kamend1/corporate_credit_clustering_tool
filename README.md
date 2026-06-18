@@ -136,6 +136,7 @@ Typical steps include:
 
 - denominator safety checks;
 - missing value handling;
+- weight-renormalized domain features, so a missing component (e.g. an EBITDA-based input for a negative-EBITDA issuer, or a debt-relative input for a debt-free issuer) reweights the remaining components instead of nulling the entire risk dimension;
 - bounded risk-score transformation;
 - optional outlier control for diagnostic ratios;
 - segment filtering; and
@@ -263,21 +264,24 @@ corporate_credit_clustering_tool/
 │   ├── 01_credit_clustering.ipynb
 │   ├── 02_agglomerative_dbscan_credit_clustering_comparison.ipynb
 │   ├── 03_private_company_credit_scoring_tool_feature_patch.ipynb
-│   └── 04_obtain_model_training_data_EDGAR.ipynb
+│   └── 04_obtain_model_training_data_EDGAR_communicated.ipynb
 │
 ├── src/
 │   ├── credit_clustering/
-│   │   ├── config.py
-│   │   ├── features.py
-│   │   ├── clustering.py
-│   │   ├── scoring.py
-│   │   ├── profiling.py
-│   │   ├── diagnostics.py
-│   │   └── artifacts.py
+│   │   ├── config.py                  # feature lists, weights, thresholds, guardrail rules
+│   │   ├── features.py                # single source of truth for feature engineering
+│   │   ├── clustering.py              # segment clustering, k-evaluation, KMeans pipeline
+│   │   ├── alternative_clustering.py  # Agglomerative / DBSCAN / PCA comparison
+│   │   ├── scoring.py                 # private-company serving / scoring
+│   │   ├── profiling.py               # cluster profiling and rating-style label mapping
+│   │   ├── diagnostics.py             # adjacent-bucket outlook diagnostics
+│   │   ├── guardrails.py              # rule-based credit guardrails
+│   │   ├── artifacts.py               # build / validate / save / load model artifacts
+│   │   └── edgar_concepts.py          # EDGAR / XBRL concept mapping
 │   │
 │   └── utils/
-│       ├── credit_report_util.py
-│       └── credit_pdf_report_util.py
+│       ├── credit_report_util.py      # Excel reporting
+│       └── credit_pdf_report_util.py  # PDF credit report
 │
 ├── docs/
 ├── inputs/
@@ -333,19 +337,19 @@ Start Jupyter:
 jupyter notebook notebooks/
 ```
 
-Recommended notebook order:
+The notebook *file numbers* reflect development history, not run order. The recommended execution order is:
 
-1. `01_obtain_model_training_data_EDGAR.ipynb`  
-   Extract and prepare public-company EDGAR data.
+1. `04_obtain_model_training_data_EDGAR_communicated.ipynb`  
+   Extract and prepare the public-company EDGAR training panel.
 
-2. `02_credit_clustering.ipynb`  
-   Engineer features, train the KMeans model, profile clusters, and save artifacts.
+2. `01_credit_clustering.ipynb`  
+   Engineer features, train the KMeans model, profile clusters, and save the model artifact.
 
 3. `03_private_company_credit_scoring_tool_feature_patch.ipynb`  
-   Score a manually entered/private company, generate scenarios, and produce report outputs.
+   Score a manually entered / private company, run scenarios, and produce report outputs.
 
-4. `04_agglomerative_dbscan_credit_clustering_comparison_v3_paths.ipynb`  
-   Compare KMeans with alternative clustering methods for methodology validation.
+4. `02_agglomerative_dbscan_credit_clustering_comparison.ipynb`  
+   Compare KMeans with Agglomerative and DBSCAN for methodology validation.
 
 ---
 
@@ -357,12 +361,15 @@ A simplified scoring workflow looks like this:
 from pathlib import Path
 import pandas as pd
 
-from src.credit_clustering.scoring import score_companies
-from src.credit_clustering.artifacts import load_model_artifact
+from src.credit_clustering.scoring import (
+    score_companies,
+    infer_near_default_cluster_from_artifact,
+)
+from src.credit_clustering.artifacts import load_artifact
 
 MODEL_PATH = Path("outputs/saved_models/nonfinancial_credit_scorecard_kmeans_k5_v3_clean.joblib")
 
-artifact = load_model_artifact(MODEL_PATH)
+artifact = load_artifact(MODEL_PATH)
 
 manual_company = pd.DataFrame([
     {
@@ -383,10 +390,17 @@ manual_company = pd.DataFrame([
     }
 ])
 
+segment = "Non-financial"
+near_default_cluster = infer_near_default_cluster_from_artifact(artifact, segment)
+
 scored = score_companies(
     manual_company,
     artifact=artifact,
-    segment="Non-financial",
+    segment=segment,
+    temperature=1.0,
+    fx_to_model_currency=1.0,
+    min_denominator=None,
+    near_default_cluster=near_default_cluster,
 )
 
 scored[[

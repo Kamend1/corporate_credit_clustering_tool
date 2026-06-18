@@ -16,8 +16,8 @@ The model assigns each scored company-year to a KMeans cluster. Raw cluster IDs 
 |---:|---|---|
 | 1 | Strong relative credit profile | Stronger financial-risk profile than most companies in the benchmark universe. |
 | 2 | Good credit profile | Generally sound profile, but not the strongest risk bucket. |
-| 3 | Leveraged / elevated risk profile | Noticeable leverage, profitability, liquidity, or cash-flow pressure. |
-| 4 | Weak credit profile | Material financial weakness, often driven by loss-making or cash-burning profiles, but not necessarily balance-sheet insolvency. |
+| 3 | Loss-making / cash-flow weak profile | Material earnings, operating cash-flow, or debt-service weakness, often with relatively low leverage or some liquidity support. |
+| 4 | Leveraged / weak operating credit profile | Leveraged profile with weaker operating performance, liquidity pressure, and/or elevated debt-service risk. |
 | 5 | Distressed / near-default proxy | Severe financial weakness or distress-like balance-sheet / debt-service profile. |
 
 These are model-relative labels. They are not external credit ratings and are not calibrated to agency notches.
@@ -280,19 +280,19 @@ Example output:
 ```text
 company_name: ExampleCorp
 risk_rank: 3
-cluster_label: 3 - Leveraged / elevated risk profile
-cluster_affinity: 0.58
-near_default_affinity: 0.07
-scorecard_credit_score: 54.2
-outlook_flag: Negative
+cluster_label: 4 - Leveraged / weak operating credit profile
+cluster_affinity: 0.42
+near_default_affinity: 0.20
+scorecard_credit_score: 59.8
+outlook_flag: Neutral
 feature_coverage_pct: 1.00
-warning_flags: debt_to_ebitda_above_6, interest_coverage_below_1
+warning_flags: interest_coverage_below_1
 guardrail_level: High caution
 ```
 
 Interpretation:
 
-The company is assigned to the elevated-risk bucket with moderate affinity. It is not close to the distressed proxy cluster, but the negative outlook and guardrail flags show that the company is positioned closer to a weaker adjacent bucket than to a stronger one. Interest coverage below 1x and debt/EBITDA above 6x should dominate the analyst narrative.
+The company is assigned to the leveraged / weak operating bucket. The near-default affinity is a proximity signal, not a default probability. The neutral outlook means the company is not clearly pulled toward either adjacent bucket, but the guardrail flags show that weak interest coverage and leverage-related diagnostics should qualify the analyst narrative.
 
 ---
 
@@ -307,7 +307,7 @@ The model rated the company BB.
 Say:
 
 ```text
-The company is assigned to a model-relative elevated-risk bucket.
+The company is assigned to a model-relative risk bucket.
 ```
 
 Do not say:

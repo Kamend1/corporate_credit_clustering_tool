@@ -322,7 +322,7 @@ For each setting:
 
 ## 12. Alternative algorithm comparison
 
-Notebook 04 should compare KMeans to:
+Notebook 02 compares KMeans to:
 
 | Method | Robustness question |
 |---|---|
@@ -330,7 +330,7 @@ Notebook 04 should compare KMeans to:
 | DBSCAN | Are there natural dense groups or clear outlier/distress regions? |
 | PCA visualization | Does the six-dimensional structure show visible separation in 2D/3D? |
 
-Alternative methods do not need to replace KMeans. Their role is to test whether KMeans is producing plausible structure rather than arbitrary segmentation.
+Alternative methods do not need to replace KMeans. Their role is to test whether KMeans is producing plausible structure rather than arbitrary segmentation. Notebook 04 is a separate EDGAR data-acquisition appendix, not the alternative-clustering comparison notebook.
 
 ---
 
@@ -384,7 +384,7 @@ For the final course project, the minimum academically useful robustness package
 |---|---|
 | k sweep from 2 to 8 | Implemented in Notebook 02 |
 | cluster profile monotonicity | Implemented in Notebook 02 |
-| alternative clustering comparison | Implemented in Notebook 04 |
+| alternative clustering comparison | Implemented in Notebook 02 |
 | one random-state stability test | Recommended |
 | one imputation or threshold sensitivity test | Recommended |
 | scenario sensitivity in Notebook 03 | Implemented / demonstrated |

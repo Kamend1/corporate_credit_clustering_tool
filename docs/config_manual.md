@@ -135,8 +135,10 @@ SCORECARD_COMPONENT_FEATURES = [
     "quick_liquidity_risk",
     "profitability_risk",
     "cashflow_risk",
+    "cfo_to_debt_risk",
     "coverage_risk",
     "fcf_risk",
+    "debt_repayment_risk",
     "ebitda_margin_risk",
     "debt_to_ebitda_risk",
     "net_debt_to_ebitda_risk",
@@ -151,9 +153,9 @@ Professional use:
 
 | Domain risk | Typical component drivers |
 |---|---|
-| `liquidity_risk` | `current_liquidity_risk`, `quick_liquidity_risk`, `cash_buffer_risk` |
+| `liquidity_risk` | `current_liquidity_risk`, `quick_liquidity_risk`, `debt_repayment_risk`, `cash_buffer_risk` |
 | `leverage_risk` | `liabilities_risk`, `debt_load_risk`, `equity_buffer_risk` |
-| `debt_service_risk` | `coverage_risk`, `fcf_risk`, `debt_to_ebitda_risk`, `net_debt_to_ebitda_risk`, `ebitda_coverage_risk` |
+| `debt_service_risk` | `coverage_risk`, `fcf_risk`, `debt_to_ebitda_risk`, `ebitda_coverage_risk` |
 | `structural_distress_risk` | `negative_equity_flag`, `liabilities_exceed_assets_flag` |
 
 These component features make the model explainable. A user should be able to trace a poor risk label back to specific financial weaknesses.
@@ -169,10 +171,10 @@ Recommended default:
 ```python
 SCORECARD_DOMAIN_WEIGHTS = {
     "leverage_risk": 0.25,
-    "liquidity_risk": 0.20,
+    "liquidity_risk": 0.10,
     "earnings_risk": 0.15,
     "operating_cashflow_risk": 0.20,
-    "debt_service_risk": 0.15,
+    "debt_service_risk": 0.25,
     "structural_distress_risk": 0.05,
 }
 ```
@@ -186,10 +188,10 @@ Important: this score is used for **cluster ranking and interpretation**, not as
 | Domain | Weight | Rationale |
 |---|---:|---|
 | Leverage | 25% | Capital structure is a persistent driver of default and refinancing risk. |
-| Liquidity | 20% | Liquidity stress often turns financial weakness into immediate distress. |
+| Liquidity | 10% | Liquidity is still important, but the v4 liquidity formula already includes debt-repayment capacity, so its post-hoc scorecard weight is kept lower to avoid double-counting. |
 | Operating cash flow | 20% | Cash generation is harder to manipulate than accounting earnings. |
 | Earnings | 15% | Profitability matters, but net income can be noisy. |
-| Debt service | 15% | Coverage is highly relevant, but source data availability can be weaker. |
+| Debt service | 25% | Coverage, FCF/debt, and EBITDA-based debt-service capacity are core credit-risk signals in the v4 scorecard. |
 | Structural distress | 5% | Powerful but crude; better handled as both feature and guardrail. |
 
 ### Tuning examples
@@ -372,8 +374,8 @@ Five clusters provide enough granularity for credit interpretation without prete
 
 1. strong relative profile;
 2. good profile;
-3. leveraged / elevated risk;
-4. weak profile;
+3. loss-making / cash-flow weak profile;
+4. leveraged / weak operating credit profile;
 5. distressed / near-default proxy.
 
 ### Why `n_init = 500`?
@@ -390,8 +392,8 @@ Recommended labels:
 DEFAULT_RATING_STYLE_LABELS = {
     1: "1 - Strong relative credit profile",
     2: "2 - Good credit profile",
-    3: "3 - Leveraged / elevated risk profile",
-    4: "4 - Weak credit profile",
+    3: "3 - Loss-making / cash-flow weak profile",
+    4: "4 - Leveraged / weak operating credit profile",
     5: "5 - Distressed / near-default proxy",
 }
 ```
@@ -591,7 +593,7 @@ For client-facing or student-facing communication, do not overemphasize `assigne
 Recommended artifact metadata:
 
 ```python
-DEFAULT_ARTIFACT_VERSION = "v3_scorecard_ebitda"
+DEFAULT_ARTIFACT_VERSION = "v4_scorecard_ebitda"
 DEFAULT_PRIMARY_SEGMENT = "Non-financial"
 ```
 
@@ -691,7 +693,7 @@ COUNTRY_SME_DENOMINATORS = {
 
 ```python
 MODEL_VERSION_NOTES = {
-    "v3_scorecard_ebitda": "Adds EBITDA-based leverage and coverage features."
+    "v4_scorecard_ebitda": "Uses weighted available-component domain-risk aggregation and updated v4 risk labels."
 }
 ```
 
