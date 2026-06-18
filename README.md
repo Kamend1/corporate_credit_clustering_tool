@@ -1,6 +1,6 @@
 # Corporate Credit Clustering Tool
 
-> Transparent KMeans-based corporate credit risk scoring using SEC EDGAR financials, scorecard-style risk features, private-company scoring, scenario analysis, and professional Excel/PDF reporting.
+> Transparent KMeans-based corporate credit-risk benchmarking using SEC EDGAR financials, scorecard-style risk features, private-company scoring, scenario analysis, guardrails, and professional Excel/PDF reporting.
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://www.python.org/)
 [![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter)](https://jupyter.org/)
@@ -11,44 +11,45 @@
 
 ## Executive Summary
 
-This project builds a transparent, modular credit risk scoring workflow based on unsupervised machine learning. It uses financial statement data from SEC EDGAR filings to train a KMeans clustering model on public-company financial profiles, then uses the trained model as a benchmark for scoring companies by relative credit quality.
+This project builds a transparent, modular credit-risk benchmarking workflow based on unsupervised machine learning. It uses financial statement data from SEC EDGAR filings to train a KMeans clustering model on public-company financial profiles, then uses the trained model as a benchmark for scoring companies by relative credit quality.
 
 The project is structured as a broader credit analytics toolkit supporting:
 
-- public-company financial data extraction and feature engineering;
-- KMeans-based credit risk clustering;
-- scorecard-style risk features;
-- private-company/manual company scoring;
+- SEC EDGAR public-company data acquisition;
+- financial statement normalization and feature engineering;
+- KMeans-based credit-risk clustering;
+- scorecard-style bounded risk features;
+- private-company and manual company scoring;
 - cluster profiling and label mapping;
-- adjacent bucket diagnostics and outlook flags;
-- rule-based credit guardrails;
-- Excel scenario analysis; and
-- professional PDF credit reports.
+- adjacent-bucket diagnostics and outlook flags;
+- rule-based analyst guardrails;
+- scenario analysis; and
+- professional Excel and PDF reporting.
 
-The output is not a formal agency credit rating. It is an analytical credit-risk screening framework designed to make financial risk segmentation more transparent, explainable, and reproducible.
+The output is **not a formal agency credit rating**. It is an analytical credit-risk screening and benchmarking framework designed to make financial-risk segmentation more transparent, explainable, and reproducible.
 
 ---
 
 ## What This Project Does
 
-The project converts company financial statements into interpretable credit risk features and groups companies into financial risk clusters. These clusters are then mapped into ordered credit-risk labels.
+The project converts company financial statements into interpretable credit-risk features and groups companies into financial-risk clusters. These clusters are then mapped into ordered credit-risk labels.
 
-The core idea is simple:
+The core idea is:
 
 1. collect structured financial statement data;
-2. engineer credit-relevant financial ratios and risk features;
+2. engineer credit-relevant financial ratios and bounded risk features;
 3. train a KMeans clustering model on comparable public-company data;
-4. profile and label the resulting clusters;
+4. profile and rank the resulting clusters;
 5. score new companies against the trained benchmark;
 6. produce analyst-facing diagnostics and reports.
 
-The model does not rely on external rating agency labels. Instead, it derives credit quality groupings from the financial characteristics of the company universe.
+The model does not rely on external rating-agency labels. Instead, it derives relative credit-risk groupings from the financial characteristics of the company universe.
 
 ---
 
-## Current Model Version
+## Current Model Version — v4 Weighted-Domain-Risk Scorecard
 
-The current production-style version is the **v3 scorecard EBITDA model**.
+The current production-style version is the **v4 weighted-domain-risk scorecard model**.
 
 Core design choices:
 
@@ -57,35 +58,48 @@ Core design choices:
 | Primary model | KMeans |
 | Number of clusters | 5 |
 | Main segment | Non-financial companies |
-| Main feature layer | Scorecard-style domain risk features |
-| KMeans initialization | 500 `n_init` |
+| Main feature layer | Six bounded scorecard-style domain risk features |
+| KMeans initialization | `k-means++` with `n_init = 500` |
 | Primary output | Ordered credit-risk label, not raw cluster ID |
 | Private-company scoring | Supported |
 | Reporting | CSV, Excel, scenario analysis, guardrails, PDF report |
 
-The model intentionally does **not** treat raw KMeans cluster IDs as meaningful credit labels. Cluster IDs such as `0`, `1`, `2`, `3`, or `4` are arbitrary identifiers assigned by the algorithm. The business interpretation comes from the mapped risk rank and credit-risk label.
+The defining v4 improvement is the domain-risk aggregation logic. In previous versions, if one component of a domain feature was missing, the whole domain feature could become missing and later be median-imputed inside the clustering pipeline. In v4, domain-level risk features are calculated from the available component risks with weight renormalization. This improves usable feature coverage and reduces the risk that missing subcomponents mechanically pull observations toward the median.
+
+In the current v4 training run, the non-financial segment contains approximately **24,957 issuer-year observations** and uses the same six model features:
+
+| Feature | Meaning |
+|---|---|
+| `structural_distress_risk` | Balance-sheet vulnerability and equity/liability pressure |
+| `earnings_risk` | Profitability weakness |
+| `operating_cashflow_risk` | Operating cash-flow weakness |
+| `liquidity_risk` | Liquidity and internal debt-repayment capacity |
+| `leverage_risk` | Balance-sheet leverage and EBITDA-relative debt pressure |
+| `debt_service_risk` | Interest, FCF, and EBITDA-based debt-service pressure |
+
+The model intentionally does **not** treat raw KMeans cluster IDs as meaningful credit labels. Cluster IDs such as `0`, `1`, `2`, `3`, or `4` are arbitrary technical identifiers assigned by the algorithm. The business interpretation comes from the mapped risk rank and credit-risk label.
 
 ---
 
-## Credit Risk Label Scale
+## Credit-Risk Label Scale
 
-The model reports a stable 1-5 risk label scale.
+The model reports a stable 1-to-5 risk label scale.
 
 | Risk Rank | Label | Interpretation |
 |---:|---|---|
-| 1 | Strong relative credit profile | Low-risk profile relative to the model universe |
-| 2 | Good credit profile | Sound credit profile with moderate weaknesses |
-| 3 | Leveraged / elevated risk profile | Material leverage or operating risk, but not clearly distressed |
-| 4 | Weak credit profile | Weak financial profile requiring close monitoring |
+| 1 | Strong relative credit profile | Stronger financial-risk profile relative to the model universe |
+| 2 | Good credit profile | Generally sound profile, but not the strongest risk bucket |
+| 3 | Loss-making / cash-flow weak profile | Weak earnings, operating cash flow, or debt-service profile, often without severe leverage or structural distress |
+| 4 | Leveraged / weak operating credit profile | Leveraged profile with weaker operating performance, liquidity pressure, and/or elevated debt-service risk |
 | 5 | Distressed / near-default proxy | Severe financial weakness, distress-like characteristics, or near-default proxy |
 
-The scale is benchmark-relative. It should be interpreted as a model-derived credit risk signal, not as an agency rating equivalent.
+The scale is benchmark-relative. It should be interpreted as a model-derived credit-risk signal, not as an agency rating equivalent.
 
 ---
 
 ## Methodology
 
-### 1. Data Extraction - SEC EDGAR
+### 1. Data Acquisition — SEC EDGAR
 
 Financial statement data is collected from SEC EDGAR filings for a broad universe of US public companies. The extraction process focuses on structured accounting concepts that can be mapped into credit-relevant financial metrics.
 
@@ -99,7 +113,7 @@ Typical raw inputs include:
 - receivables;
 - total liabilities;
 - current liabilities;
-- total debt;
+- long-term and short-term debt;
 - equity;
 - net income;
 - operating cash flow;
@@ -107,9 +121,11 @@ Typical raw inputs include:
 - depreciation and amortization; and
 - EBITDA or EBITDA proxy fields where available.
 
+Notebook 04 documents the EDGAR data-acquisition workflow and should be treated as a technical appendix. It is important for reproducibility, but the main model construction and business application are demonstrated in Notebooks 01–03.
+
 ### 2. Feature Engineering
 
-Raw accounting data is converted into financial ratios, warning flags, and scorecard-style risk features. The model is designed to handle incomplete financial inputs pragmatically, especially for private-company scoring, while still flagging lower feature coverage when data quality is weak.
+Raw accounting data is converted into financial ratios, warning flags, component risks, and scorecard-style domain risk features. The same feature engineering logic is used during model training and private-company scoring. This is critical because a manually scored company must be represented in the same feature space as the public-company training observations.
 
 Lower-level ratios include liquidity, leverage, profitability, operating cash-flow, and debt-serviceability measures. These are then transformed into higher-level risk dimensions used for clustering and scoring.
 
@@ -135,8 +151,8 @@ The preprocessing layer is designed to make financial ratios usable for distance
 Typical steps include:
 
 - denominator safety checks;
-- missing value handling;
-- weight-renormalized domain features, so a missing component (e.g. an EBITDA-based input for a negative-EBITDA issuer, or a debt-relative input for a debt-free issuer) reweights the remaining components instead of nulling the entire risk dimension;
+- missing-value handling;
+- weight-renormalized domain features, so a missing component reweights the remaining available components instead of nulling the whole risk dimension;
 - bounded risk-score transformation;
 - optional outlier control for diagnostic ratios;
 - segment filtering; and
@@ -158,13 +174,20 @@ These alternatives are useful for validation and sensitivity analysis, but KMean
 
 ### 6. Cluster Profiling and Label Mapping
 
-After clustering, each cluster is profiled using median financial ratios, risk scores, and diagnostic statistics. The clusters are then ordered from strongest to weakest credit profile and mapped into the 1-5 risk label scale.
+After clustering, each cluster is profiled using median financial ratios, risk scores, and diagnostic statistics. The clusters are then ordered from strongest to weakest credit profile and mapped into the 1-to-5 risk label scale.
 
 This is a critical design point: the raw KMeans cluster number is not the credit rating. The mapped risk rank and descriptive label are the analyst-facing outputs.
 
+The current v4 model separates two important mid-risk patterns:
+
+1. companies that are loss-making or cash-flow weak but not necessarily highly leveraged; and
+2. companies with a leveraged and weaker operating credit profile.
+
+This distinction is one of the key interpretability gains of the v4 model.
+
 ---
 
-## Private Company Scoring
+## Private-Company Scoring
 
 The trained model can be used to score a private or manually entered company by supplying core financial statement inputs.
 
@@ -186,6 +209,7 @@ Typical manual inputs include:
 - short-term debt;
 - net income;
 - operating cash flow;
+- operating income;
 - interest expense;
 - depreciation/amortization; and
 - EBITDA where available.
@@ -285,6 +309,7 @@ corporate_credit_clustering_tool/
 │
 ├── docs/
 ├── inputs/
+├── outputs/
 ├── requirements.txt
 ├── LICENSE
 └── README.md
@@ -337,23 +362,25 @@ Start Jupyter:
 jupyter notebook notebooks/
 ```
 
-The notebook *file numbers* reflect development history, not run order. The recommended execution order is:
+The notebook file numbers reflect development history and project communication order. The recommended review/execution sequence is:
 
 1. `04_obtain_model_training_data_EDGAR_communicated.ipynb`  
-   Extract and prepare the public-company EDGAR training panel.
+   Optional technical appendix for rebuilding or refreshing the EDGAR training data foundation.
 
 2. `01_credit_clustering.ipynb`  
-   Engineer features, train the KMeans model, profile clusters, and save the model artifact.
+   Engineer features, train the v4 KMeans model, profile clusters, and save the model artifact.
 
-3. `03_private_company_credit_scoring_tool_feature_patch.ipynb`  
+3. `02_agglomerative_dbscan_credit_clustering_comparison.ipynb`  
+   Compare KMeans with Agglomerative clustering and DBSCAN for methodology validation.
+
+4. `03_private_company_credit_scoring_tool_feature_patch.ipynb`  
    Score a manually entered / private company, run scenarios, and produce report outputs.
 
-4. `02_agglomerative_dbscan_credit_clustering_comparison.ipynb`  
-   Compare KMeans with Agglomerative and DBSCAN for methodology validation.
+For normal project review, Notebooks 01–03 communicate the core modelling and application workflow. Notebook 04 explains the data-acquisition machinery behind the training panel.
 
 ---
 
-## Example Private Company Scoring Workflow
+## Example Private-Company Scoring Workflow
 
 A simplified scoring workflow looks like this:
 
@@ -367,7 +394,7 @@ from src.credit_clustering.scoring import (
 )
 from src.credit_clustering.artifacts import load_artifact
 
-MODEL_PATH = Path("outputs/saved_models/nonfinancial_credit_scorecard_kmeans_k5_v3_clean.joblib")
+MODEL_PATH = Path("outputs/saved_models/nonfinancial_credit_scorecard_kmeans_k5_v4.joblib")
 
 artifact = load_artifact(MODEL_PATH)
 
@@ -375,6 +402,9 @@ manual_company = pd.DataFrame([
     {
         "company_name": "Manual 2025 Company",
         "fiscal_year": 2025,
+        "currency": "USD",
+        "major_sector": "Manufacturing / Industrials",
+        "financial_flag": "Non-financial",
         "revenue": 48_585_294,
         "assets": 29_721_275,
         "current_assets": 10_037_746,
@@ -387,6 +417,12 @@ manual_company = pd.DataFrame([
         "long_term_debt": 7_910_588,
         "short_term_debt": 1_478_235,
         "net_income": 949_412,
+        "cfo": 3_558_235,
+        "capex": 588_235,
+        "operating_income": 1_664_706,
+        "interest_expense": 597_647,
+        "depreciation_amortization": 2_713_000,
+        "ebitda": None,
     }
 ])
 
@@ -416,7 +452,7 @@ scored[[
 
 Adjacent-bucket outlook fields are added later by the diagnostics layer used in Notebook 03.
 
-Exact imports may vary as the package is refined, but the intended workflow is stable: load artifact, prepare company inputs, score company, review diagnostics, export outputs.
+Exact paths may vary depending on the final artifact filename, but the intended workflow is stable: load artifact, prepare company inputs, score company, review diagnostics, export outputs.
 
 ---
 
@@ -426,10 +462,13 @@ Potential use cases include:
 
 - credit screening of company watchlists;
 - private-company credit diagnostics;
+- business owner benchmarking before bank financing discussions;
 - internal finance and CFO analysis;
 - peer benchmarking;
+- customer credit-risk assessment;
+- key supplier financial-stability monitoring;
 - credit surveillance;
-- early warning signal design;
+- early-warning signal design;
 - portfolio monitoring;
 - academic or professional demonstration of unsupervised learning in credit risk;
 - model explainability exercises; and
@@ -463,6 +502,10 @@ KMeans cluster numbers are algorithmic identifiers. They are not credit ratings.
 ### Private Companies Are Scored by Benchmarking
 
 Private-company scoring works by comparing the manually entered company to the trained public-company financial-risk space. This is useful, but it also means that interpretation should consider differences between public-company and private-company financial structures.
+
+### The Model Is Domain-Guided
+
+The project is unsupervised because it does not train on external rating labels or default outcomes. However, it is not a purely raw-data clustering exercise. The feature space is shaped by credit-analysis logic, financial ratio selection, risk thresholds, domain aggregation, and post-model guardrails. This is intentional because the goal is interpretable credit-risk benchmarking.
 
 ---
 
